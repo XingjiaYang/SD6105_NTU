@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IPEDS Histogram Explorer</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f7f7f7;
+      color: #222;
+    }
+
+    .container {
+      display: flex;
+      height: 100vh;
+    }
+
+    .sidebar {
+      width: 320px;
+      background: #fff;
+      border-right: 1px solid #ddd;
+      padding: 16px;
+      box-sizing: border-box;
+      overflow-y: auto;
+    }
+
+    .main {
+      flex: 1;
+      position: relative;
+      background: #fafafa;
+    }
+
+    h1 {
+      font-size: 22px;
+      margin: 0 0 12px 0;
+    }
+
+    .desc {
+      font-size: 13px;
+      color: #555;
+      line-height: 1.5;
+      margin-bottom: 16px;
+    }
+
+    .control-group {
+      margin-bottom: 14px;
+    }
+
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: bold;
+      margin-bottom: 6px;
+    }
+
+    select, input, button {
+      width: 100%;
+      padding: 8px;
+      box-sizing: border-box;
+      font-size: 14px;
+    }
+
+    button {
+      cursor: pointer;
+      border: none;
+      background: #2563eb;
+      color: white;
+      border-radius: 6px;
+      margin-top: 6px;
+    }
+
+    button:hover {
+      background: #1d4ed8;
+    }
+
+    .status {
+      font-size: 13px;
+      margin-top: 10px;
+      color: #333;
+      white-space: pre-line;
+      line-height: 1.5;
+    }
+
+    #chart {
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: white;
+    }
+
+    .error {
+      color: #b91c1c;
+      font-weight: bold;
+    }
+
+    .ok {
+      color: #166534;
+      font-weight: bold;
+    }
+
+    .tooltip {
+      position: absolute;
+      visibility: hidden;
+      background: rgba(0, 0, 0, 0.85);
+      color: white;
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      pointer-events: none;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="sidebar">
+      <h1>Histogram Explorer</h1>
+      <div class="desc">
+        Load <code>./IPEDS_data.csv</code>, choose a column, and draw a histogram.
+        If the selected column is not numerical, the page will show <b>Must be Numerical</b>.
+      </div>
+
+      <div class="control-group">
+        <label for="columnSelect">Column</label>
+        <select id="columnSelect"></select>
+      </div>
+
+      <div class="control-group">
+        <label for="binsInput">Number of bins</label>
+        <input id="binsInput" type="number" min="3" max="100" step="1" value="30" />
+      </div>
+
+      <div class="control-group">
+        <button id="drawBtn">Draw Histogram</button>
+      </div>
+
+      <div class="status" id="statusBox">Loading data...</div>
+    </div>
+
+    <div class="main">
+      <svg id="chart"></svg>
+      <div class="tooltip" id="tooltip"></div>
+    </div>
+  </div>
+
+  <script>
+    const svg = d3.select("#chart");
+    const tooltip = d3.select("#tooltip");
+    const statusBox = document.getElementById("statusBox");
+    const columnSelect = document.getElementById("columnSelect");
+    const binsInput = document.getElementById("binsInput");
+    const drawBtn = document.getElementById("drawBtn");
+
+    let rawData = [];
+    let columns = [];
+
+    function setStatus(message, isError = false) {
+      statusBox.innerHTML = isError
+        ? `<span class="error">${message}</span>`
+        : `<span class="ok">${message}</span>`;
+    }
+
+    function resizeSvg() {
+      const main = document.querySelector(".main");
+      svg.attr("width", main.clientWidth).attr("height", main.clientHeight);
+    }
+
+    window.addEventListener("resize", resizeSvg);
+
+    function fillColumnDropdown(cols) {
+      columnSelect.innerHTML = "";
+      cols.forEach(col => {
+        const op = document.createElement("option");
+        op.value = col;
+        op.textContent = col;
+        columnSelect.appendChild(op);
+      });
+    }
+
+    function parseValue(v) {
+      if (v == null) return null;
+      const s = String(v).trim();
+      if (s === "") return null;
+      const num = +s;
+      return Number.isFinite(num) ? num : null;
+    }
+
+    function getNumericValues(data, col) {
+      return data
+        .map(d => parseValue(d[col]))
+        .filter(v => v !== null);
+    }
+
+    function isNumericalColumn(data, col) {
+      let nonMissing = 0;
+      let numericCount = 0;
+
+      for (const row of data) {
+        const v = row[col];
+        if (v != null && String(v).trim() !== "") {
+          nonMissing++;
+          if (parseValue(v) !== null) numericCount++;
+        }
+      }
+
+      if (nonMissing === 0) return false;
+      return numericCount === nonMissing;
+    }
+
+    function clearChart() {
+      svg.selectAll("*").remove();
+    }
+
+    function drawHistogram(data, col, binsCount) {
+      clearChart();
+      resizeSvg();
+
+      const width = +svg.attr("width");
+      const height = +svg.attr("height");
+
+      const margin = { top: 50, right: 30, bottom: 70, left: 70 };
+
+      const values = getNumericValues(data, col);
+
+      const x = d3.scaleLinear()
+        .domain(d3.extent(values))
+        .nice()
+        .range([margin.left, width - margin.right]);
+
+      const histogram = d3.histogram()
+        .value(d => d)
+        .domain(x.domain())
+        .thresholds(x.ticks(binsCount));
+
+      const bins = histogram(values);
+
+      const y = d3.scaleLinear()
+        .domain([0, d3.max(bins, d => d.length) || 1])
+        .nice()
+        .range([height - margin.bottom, margin.top]);
+
+      svg.append("g")
+        .attr("transform", `translate(0,${height - margin.bottom})`)
+        .call(d3.axisBottom(x));
+
+      svg.append("g")
+        .attr("transform", `translate(${margin.left},0)`)
+        .call(d3.axisLeft(y));
+
+      svg.append("text")
+        .attr("x", width / 2)
+        .attr("y", 28)
+        .attr("text-anchor", "middle")
+        .attr("font-size", 18)
+        .attr("font-weight", "bold")
+        .text(`Histogram of ${col}`);
+
+      svg.append("text")
+        .attr("x", width / 2)
+        .attr("y", height - 18)
+        .attr("text-anchor", "middle")
+        .attr("font-size", 13)
+        .text(col);
+
+      svg.append("text")
+        .attr("transform", "rotate(-90)")
+        .attr("x", -(height / 2))
+        .attr("y", 20)
+        .attr("text-anchor", "middle")
+        .attr("font-size", 13)
+        .text("Count");
+
+      svg.append("g")
+        .selectAll("rect")
+        .data(bins)
+        .join("rect")
+        .attr("x", d => x(d.x0) + 1)
+        .attr("y", d => y(d.length))
+        .attr("width", d => Math.max(0, x(d.x1) - x(d.x0) - 1))
+        .attr("height", d => y(0) - y(d.length))
+        .attr("fill", "steelblue")
+        .attr("opacity", 0.8)
+        .on("mouseover", function(event, d) {
+          d3.select(this).attr("opacity", 1);
+          tooltip
+            .style("visibility", "visible")
+            .html(`
+              <div><strong>Bin range</strong>: ${d.x0.toFixed(3)} to ${d.x1.toFixed(3)}</div>
+              <div><strong>Count</strong>: ${d.length}</div>
+            `);
+        })
+        .on("mousemove", function(event) {
+          tooltip
+            .style("left", (event.pageX + 12) + "px")
+            .style("top", (event.pageY + 12) + "px");
+        })
+        .on("mouseout", function() {
+          d3.select(this).attr("opacity", 0.8);
+          tooltip.style("visibility", "hidden");
+        });
+
+      setStatus(
+        `Histogram drawn successfully.
+Column: ${col}
+Valid numeric values: ${values.length}
+Bins: ${binsCount}`
+      );
+    }
+
+    function tryDrawSelectedColumn() {
+      const col = columnSelect.value;
+      const binsCount = Math.max(3, +binsInput.value || 30);
+
+      if (!isNumericalColumn(rawData, col)) {
+        clearChart();
+        setStatus("Must be Numerical", true);
+        return;
+      }
+
+      drawHistogram(rawData, col, binsCount);
+    }
+
+    async function loadData() {
+      try {
+        const data = await d3.csv("./IPEDS_data.csv");
+        rawData = data;
+        columns = data.columns || Object.keys(data[0] || {});
+        fillColumnDropdown(columns);
+        resizeSvg();
+        setStatus(`Data loaded successfully. Rows: ${rawData.length}, Columns: ${columns.length}`);
+      } catch (err) {
+        clearChart();
+        setStatus("Failed to load ./IPEDS_data.csv", true);
+        console.error(err);
+      }
+    }
+
+    drawBtn.addEventListener("click", tryDrawSelectedColumn);
+
+    columnSelect.addEventListener("change", () => {
+      clearChart();
+      setStatus("Column changed. Click 'Draw Histogram' to render.");
+    });
+
+    resizeSvg();
+    loadData();
+  </script>
+</body>
+</html>

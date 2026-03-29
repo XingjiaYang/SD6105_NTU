@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IPEDS Bar Chart Explorer</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f7f7f7;
+      color: #222;
+    }
+
+    .container {
+      display: flex;
+      height: 100vh;
+    }
+
+    .sidebar {
+      width: 320px;
+      background: #fff;
+      border-right: 1px solid #ddd;
+      padding: 16px;
+      box-sizing: border-box;
+      overflow-y: auto;
+    }
+
+    .main {
+      flex: 1;
+      position: relative;
+      background: #fafafa;
+    }
+
+    h1 {
+      font-size: 22px;
+      margin: 0 0 12px 0;
+    }
+
+    .desc {
+      font-size: 13px;
+      color: #555;
+      line-height: 1.5;
+      margin-bottom: 16px;
+    }
+
+    .control-group {
+      margin-bottom: 14px;
+    }
+
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: bold;
+      margin-bottom: 6px;
+    }
+
+    select, input, button {
+      width: 100%;
+      padding: 8px;
+      box-sizing: border-box;
+      font-size: 14px;
+    }
+
+    button {
+      cursor: pointer;
+      border: none;
+      background: #2563eb;
+      color: white;
+      border-radius: 6px;
+      margin-top: 6px;
+    }
+
+    button:hover {
+      background: #1d4ed8;
+    }
+
+    .status {
+      font-size: 13px;
+      margin-top: 10px;
+      color: #333;
+      white-space: pre-line;
+      line-height: 1.5;
+    }
+
+    #chart {
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: white;
+    }
+
+    .error {
+      color: #b91c1c;
+      font-weight: bold;
+    }
+
+    .ok {
+      color: #166534;
+      font-weight: bold;
+    }
+
+    .tooltip {
+      position: absolute;
+      visibility: hidden;
+      background: rgba(0, 0, 0, 0.85);
+      color: white;
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      pointer-events: none;
+      z-index: 10;
+      max-width: 300px;
+      line-height: 1.4;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="sidebar">
+      <h1>Bar Chart Explorer</h1>
+      <div class="desc">
+        Load <code>./IPEDS_data.csv</code>, choose a categorical column, and draw a bar chart.
+        If the selected column is not suitable, the page will show <b>Must be Categorical</b>.
+      </div>
+
+      <div class="control-group">
+        <label for="columnSelect">Column</label>
+        <select id="columnSelect"></select>
+      </div>
+
+      <div class="control-group">
+        <label for="topNInput">Top N categories</label>
+        <input id="topNInput" type="number" min="3" max="100" step="1" value="20" />
+      </div>
+
+      <div class="control-group">
+        <label for="orientationSelect">Orientation</label>
+        <select id="orientationSelect">
+          <option value="vertical">Vertical</option>
+          <option value="horizontal">Horizontal</option>
+        </select>
+      </div>
+
+      <div class="control-group">
+        <button id="drawBtn">Draw Bar Chart</button>
+      </div>
+
+      <div class="status" id="statusBox">Loading data...</div>
+    </div>
+
+    <div class="main">
+      <svg id="chart"></svg>
+      <div class="tooltip" id="tooltip"></div>
+    </div>
+  </div>
+
+  <script>
+    const svg = d3.select("#chart");
+    const tooltip = d3.select("#tooltip");
+    const statusBox = document.getElementById("statusBox");
+    const columnSelect = document.getElementById("columnSelect");
+    const topNInput = document.getElementById("topNInput");
+    const orientationSelect = document.getElementById("orientationSelect");
+    const drawBtn = document.getElementById("drawBtn");
+
+    let rawData = [];
+    let columns = [];
+
+    function setStatus(message, isError = false) {
+      statusBox.innerHTML = isError
+        ? `<span class="error">${message}</span>`
+        : `<span class="ok">${message}</span>`;
+    }
+
+    function resizeSvg() {
+      const main = document.querySelector(".main");
+      svg.attr("width", main.clientWidth).attr("height", main.clientHeight);
+    }
+
+    window.addEventListener("resize", resizeSvg);
+
+    function fillColumnDropdown(cols) {
+      columnSelect.innerHTML = "";
+      cols.forEach(col => {
+        const op = document.createElement("option");
+        op.value = col;
+        op.textContent = col;
+        columnSelect.appendChild(op);
+      });
+    }
+
+    function clearChart() {
+      svg.selectAll("*").remove();
+    }
+
+    function isCategoricalColumn(data, col) {
+      const values = data
+        .map(d => d[col])
+        .filter(v => v != null && String(v).trim() !== "");
+
+      if (values.length === 0) return false;
+
+      const uniqueCount = new Set(values).size;
+      const numericLikeCount = values.filter(v => {
+        const s = String(v).trim();
+        return s !== "" && Number.isFinite(+s);
+      }).length;
+
+      const numericRatio = numericLikeCount / values.length;
+      const uniqueRatio = uniqueCount / values.length;
+
+      // 纯数值列不应作为 categorical bar chart
+      if (numericRatio === 1) return false;
+
+      // 唯一值太多（例如 Name）也不适合做 count bar chart
+      if (uniqueRatio > 0.8 && uniqueCount > 30) return false;
+
+      return true;
+    }
+
+    function getCategoryCounts(data, col, topN) {
+      const counts = d3.rollups(
+        data.filter(d => d[col] != null && String(d[col]).trim() !== ""),
+        v => v.length,
+        d => String(d[col]).trim()
+      );
+
+      return counts
+        .map(([category, count]) => ({ category, count }))
+        .sort((a, b) => d3.descending(a.count, b.count))
+        .slice(0, topN);
+    }
+
+    function drawVerticalBarChart(formatted, col) {
+      clearChart();
+      resizeSvg();
+
+      const width = +svg.attr("width");
+      const height = +svg.attr("height");
+      const margin = { top: 60, right: 30, bottom: 170, left: 80 };
+
+      const x = d3.scaleBand()
+        .domain(formatted.map(d => d.category))
+        .range([margin.left, width - margin.right])
+        .padding(0.2);
+
+      const y = d3.scaleLinear()
+        .domain([0, d3.max(formatted, d => d.count) || 1])
+        .nice()
+        .range([height - margin.bottom, margin.top]);
+
+      svg.append("g")
+        .attr("transform", `translate(0,${height - margin.bottom})`)
+        .call(d3.axisBottom(x))
+        .selectAll("text")
+        .attr("transform", "rotate(-40)")
+        .style("text-anchor", "end");
+
+      svg.append("g")
+        .attr("transform", `translate(${margin.left},0)`)
+        .call(d3.axisLeft(y));
+
+      svg.append("g")
+        .selectAll("rect")
+        .data(formatted)
+        .join("rect")
+        .attr("x", d => x(d.category))
+        .attr("y", d => y(d.count))
+        .attr("width", x.bandwidth())
+        .attr("height", d => y(0) - y(d.count))
+        .attr("fill", "steelblue")
+        .attr("opacity", 0.85)
+        .on("mouseover", function(event, d) {
+          d3.select(this).attr("opacity", 1);
+          tooltip
+            .style("visibility", "visible")
+            .html(`
+              <div><strong>Category</strong>: ${d.category}</div>
+              <div><strong>Count</strong>: ${d.count}</div>
+            `);
+        })
+        .on("mousemove", function(event) {
+          tooltip
+            .style("left", (event.pageX + 12) + "px")
+            .style("top", (event.pageY + 12) + "px");
+        })
+        .on("mouseout", function() {
+          d3.select(this).attr("opacity", 0.85);
+          tooltip.style("visibility", "hidden");
+        });
+
+      svg.append("text")
+        .attr("x", width / 2)
+        .attr("y", 30)
+        .attr("text-anchor", "middle")
+        .attr("font-size", 18)
+        .attr("font-weight", "bold")
+        .text(`Bar Chart of ${col}`);
+
+      svg.append("text")
+        .attr("x", width / 2)
+        .attr("y", height - 20)
+        .attr("text-anchor", "middle")
+        .attr("font-size", 13)
+        .text(col);
+
+      svg.append("text")
+        .attr("transform", "rotate(-90)")
+        .attr("x", -(height / 2))
+        .attr("y", 22)
+        .attr("text-anchor", "middle")
+        .attr("font-size", 13)
+        .text("Count");
+    }
+
+    function drawHorizontalBarChart(formatted, col) {
+      clearChart();
+      resizeSvg();
+
+      const width = +svg.attr("width");
+      const height = +svg.attr("height");
+      const margin = { top: 60, right: 40, bottom: 40, left: 320 };
+
+      const y = d3.scaleBand()
+        .domain(formatted.map(d => d.category))
+        .range([margin.top, height - margin.bottom])
+        .padding(0.2);
+
+      const x = d3.scaleLinear()
+        .domain([0, d3.max(formatted, d => d.count) || 1])
+        .nice()
+        .range([margin.left, width - margin.right]);
+
+      svg.append("g")
+        .attr("transform", `translate(0,${height - margin.bottom})`)
+        .call(d3.axisBottom(x));
+
+      svg.append("g")
+        .attr("transform", `translate(${margin.left},0)`)
+        .call(d3.axisLeft(y));
+
+      svg.append("g")
+        .selectAll("rect")
+        .data(formatted)
+        .join("rect")
+        .attr("x", margin.left)
+        .attr("y", d => y(d.category))
+        .attr("width", d => x(d.count) - margin.left)
+        .attr("height", y.bandwidth())
+        .attr("fill", "steelblue")
+        .attr("opacity", 0.85)
+        .on("mouseover", function(event, d) {
+          d3.select(this).attr("opacity", 1);
+          tooltip
+            .style("visibility", "visible")
+            .html(`
+              <div><strong>Category</strong>: ${d.category}</div>
+              <div><strong>Count</strong>: ${d.count}</div>
+            `);
+        })
+        .on("mousemove", function(event) {
+          tooltip
+            .style("left", (event.pageX + 12) + "px")
+            .style("top", (event.pageY + 12) + "px");
+        })
+        .on("mouseout", function() {
+          d3.select(this).attr("opacity", 0.85);
+          tooltip.style("visibility", "hidden");
+        });
+
+      svg.append("text")
+        .attr("x", width / 2)
+        .attr("y", 30)
+        .attr("text-anchor", "middle")
+        .attr("font-size", 18)
+        .attr("font-weight", "bold")
+        .text(`Bar Chart of ${col}`);
+
+      svg.append("text")
+        .attr("x", width / 2)
+        .attr("y", height - 10)
+        .attr("text-anchor", "middle")
+        .attr("font-size", 13)
+        .text("Count");
+    }
+
+    function tryDrawSelectedColumn() {
+      const col = columnSelect.value;
+      const topN = Math.max(3, +topNInput.value || 20);
+      const orientation = orientationSelect.value;
+
+      if (!isCategoricalColumn(rawData, col)) {
+        clearChart();
+        setStatus("Must be Categorical", true);
+        return;
+      }
+
+      const formatted = getCategoryCounts(rawData, col, topN);
+
+      if (!formatted.length) {
+        clearChart();
+        setStatus("No valid categories found", true);
+        return;
+      }
+
+      if (orientation === "horizontal") {
+        drawHorizontalBarChart(formatted, col);
+      } else {
+        drawVerticalBarChart(formatted, col);
+      }
+
+      setStatus(
+        `Bar chart drawn successfully.
+Column: ${col}
+Categories shown: ${formatted.length}
+Orientation: ${orientation}`
+      );
+    }
+
+    async function loadData() {
+      try {
+        const data = await d3.csv("./IPEDS_data.csv");
+        rawData = data;
+        columns = data.columns || Object.keys(data[0] || {});
+        fillColumnDropdown(columns);
+        resizeSvg();
+        setStatus(`Data loaded successfully. Rows: ${rawData.length}, Columns: ${columns.length}`);
+      } catch (err) {
+        clearChart();
+        setStatus("Failed to load ./IPEDS_data.csv", true);
+        console.error(err);
+      }
+    }
+
+    drawBtn.addEventListener("click", tryDrawSelectedColumn);
+
+    columnSelect.addEventListener("change", () => {
+      clearChart();
+      setStatus("Column changed. Click 'Draw Bar Chart' to render.");
+    });
+
+    resizeSvg();
+    loadData();
+  </script>
+</body>
+</html>
