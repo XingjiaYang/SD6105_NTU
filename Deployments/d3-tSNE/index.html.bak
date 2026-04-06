@@ -569,15 +569,25 @@ function drawScatter(points, labelCol) {
     .attr("opacity", 0.75)
     .on("mouseover", function(event, d) {
       d3.select(this).attr("r", 6).attr("opacity", 1);
-      const shown = d.original[labelCol] ?? "(missing)";
-      const more = Object.entries(d.original)
-        .slice(0, 8)
-        .map(([k, v]) => `<strong>${k}</strong>: ${v}`)
-        .join("<br>");
+      const label = d.original[labelCol] ?? "(missing)";
+      const name = d.original["Name"] ?? "(no name)";
+      const state = d.original["State abbreviation"] ?? "(no state)";
+      const tuition = d.original["Average Tuition and Fees"];
+      const enrollment = d.original["Total enrollment"];
       tooltip
         .style("visibility", "visible")
-        .html(`<div><strong>${shown}</strong></div><hr style="border:none;border-top:1px solid #555">${more}`);
+        .html(`
+          <div><strong>${name}</strong></div>
+          <div style="color:#ccc">${labelCol}: ${label}</div>
+          <hr style="border:none;border-top:1px solid #555">
+          State: ${state}<br/>
+          Tuition: ${tuition ?? "N/A"}<br/>
+          Enrollment: ${enrollment ?? "N/A"}
+        `);
     })
+
+      
+
     .on("mousemove", function(event) {
       tooltip
         .style("left", (event.pageX + 12) + "px")
