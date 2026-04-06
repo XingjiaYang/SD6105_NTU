@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Institution Profiler | Perfectly Aligned Radar</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    /* --- GeoMap Style: Modern & Minimalist --- */
+    :root {
+      --primary: #3498db;
+      --bg: #f4f7f9;
+      --card: #ffffff;
+      --text: #2c3e50;
+      --muted: #95a5a6;
+    }
+
+    body {
+      margin: 0;
+      font-family: 'Inter', -apple-system, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      display: flex;
+      justify-content: center;
+      padding: 60px 20px;
+    }
+
+    .explorer-card {
+      width: 100%;
+      max-width: 900px;
+      background: var(--card);
+      border-radius: 24px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.08);
+      padding: 50px;
+    }
+
+    header { text-align: center; margin-bottom: 40px; }
+    h1 { margin: 0; font-size: 30px; font-weight: 800; letter-spacing: -1px; }
+
+    /* --- Search UI --- */
+    .search-container {
+      position: relative;
+      max-width: 600px;
+      margin: 0 auto 50px;
+    }
+
+    #search-input {
+      width: 100%;
+      padding: 18px 30px;
+      border-radius: 50px;
+      border: 2px solid #eee;
+      font-size: 16px;
+      outline: none;
+      transition: all 0.3s;
+      box-sizing: border-box;
+    }
+    #search-input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 10px 30px rgba(52,152,219,0.15);
+    }
+
+    .suggestions {
+      position: absolute;
+      top: 65px;
+      width: 100%;
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 15px 40px rgba(0,0,0,0.1);
+      z-index: 1000;
+      max-height: 300px;
+      overflow-y: auto;
+      display: none;
+      border: 1px solid #f0f0f0;
+    }
+    .suggestion-item {
+      padding: 15px 25px;
+      cursor: pointer;
+      border-bottom: 1px solid #f9f9f9;
+    }
+    .suggestion-item:hover {
+      background: #f4f7f9;
+      color: var(--primary);
+    }
+
+    /* --- Chart Layout --- */
+    #profile-display {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      margin-top: 20px;
+    }
+
+    .uni-info { text-align: center; margin-bottom: 30px; }
+    .uni-info h2 { font-size: 26px; margin: 0; color: var(--text); }
+    .uni-info p { font-size: 14px; color: var(--muted); margin-top: 5px; text-transform: uppercase; letter-spacing: 1px; }
+
+    /* Radar Graphics */
+    .radar-grid { fill: none; stroke: #eee; stroke-width: 1; }
+    .radar-axis { stroke: #eee; stroke-width: 1.5; }
+    .radar-label { font-size: 12px; font-weight: 700; fill: var(--text); }
+    .radar-path { fill: var(--primary); fill-opacity: 0.2; stroke: var(--primary); stroke-width: 3; }
+    .radar-circle { fill: var(--primary); stroke: #fff; stroke-width: 2; }
+  </style>
+</head>
+<body>
+
+<div class="explorer-card">
+  <header>
+    <h1>Institution Profiler</h1>
+    <div id="status" style="font-size: 12px; color: var(--muted); margin-top: 10px;">Loading Data...</div>
+  </header>
+
+  <div class="search-container">
+    <input type="text" id="search-input" placeholder="Search institution name..." autocomplete="off">
+    <div id="dropdown" class="suggestions"></div>
+  </div>
+
+  <div id="profile-display">
+    <div class="uni-info">
+      <h2 id="uni-name"></h2>
+      <p id="uni-meta"></p>
+    </div>
+    <div id="radar-container"></div>
+  </div>
+</div>
+
+<script>
+  let fullData = [];
+  let tuitionRange = [0, 1];
+
+  // 1. Data Loading & Sanitization
+  async function loadData() {
+    try {
+      const data = await d3.csv("./IPEDS_data.csv");
+      
+      const tuitionValues = data.map(d => +d['Tuition and fees, 2013-14']).filter(v => v > 0);
+      tuitionRange = [d3.min(tuitionValues), d3.max(tuitionValues)];
+
+      fullData = data.map(d => {
+        const apps = +d['Applicants total'] || 0;
+        const adms = +d['Admissions total'] || 0;
+        const tuition = +d['Tuition and fees, 2013-14'] || 0;
+        const sat = +d['SAT Math 75th percentile score'] || 0;
+        const grad = +d['Graduation rate - Bachelor degree within 6 years, total'] || 0;
+        const aid = +d['Percent of freshmen receiving any financial aid'] || 0;
+
+        return {
+          id: d['ID number'],
+          name: d['Name'],
+          state: d['State abbreviation'],
+          // Normalized Metrics (0-1)
+          metrics: [
+            { axis: "Academic", value: sat > 0 ? (sat - 400) / 400 : 0.5 },
+            { axis: "Selectivity", value: apps > 0 ? (1 - (adms / apps)) : 0.5 },
+            { axis: "Graduation", value: grad / 100 },
+            { axis: "Affordability", value: tuition > 0 ? (1 - (tuition - tuitionRange[0]) / (tuitionRange[1] - tuitionRange[0])) : 0.5 },
+            { axis: "Financial Aid", value: aid / 100 }
+          ]
+        };
+      });
+
+      d3.select("#status").text(`Successfully loaded ${fullData.length} records.`);
+    } catch (e) {
+      d3.select("#status").text("Error: Could not find IPEDS_data.csv").style("color", "red");
+    }
+  }
+
+  // 2. Search & Interaction
+  const searchInput = d3.select("#search-input");
+  const dropdown = d3.select("#dropdown");
+
+  searchInput.on("input", function() {
+    const query = this.value.toLowerCase();
+    if (query.length < 2) { dropdown.style("display", "none"); return; }
+
+    const matches = fullData.filter(d => d.name.toLowerCase().includes(query)).slice(0, 8);
+    dropdown.html("").style("display", "block");
+
+    matches.forEach(m => {
+      dropdown.append("div").attr("class", "suggestion-item")
+        .text(`${m.name} (${m.state})`)
+        .on("click", () => renderRadar(m));
+    });
+  });
+
+  // 3. Perfect Alignment Radar Renderer
+  function renderRadar(uni) {
+    dropdown.style("display", "none");
+    searchInput.property("value", uni.name);
+    
+    d3.select("#profile-display").style("display", "flex");
+    d3.select("#uni-name").text(uni.name);
+    d3.select("#uni-meta").text(`${uni.state} • ID: ${uni.id}`);
+
+    const container = d3.select("#radar-container");
+    container.html("");
+
+    const width = 500, height = 500;
+    const margin = 80;
+    const radius = Math.min(width, height) / 2 - margin;
+    const data = uni.metrics;
+    const angleSlice = (Math.PI * 2) / data.length;
+
+    const svg = container.append("svg")
+      .attr("width", width)
+      .attr("height", height)
+      .append("g")
+      .attr("transform", `translate(${width/2}, ${height/2})`);
+
+    // --- Grid System ---
+    const levels = 5;
+    for (let i = 0; i < levels; i++) {
+        const r = (radius / levels) * (i + 1);
+        svg.append("circle")
+           .attr("class", "radar-grid")
+           .attr("r", r);
+    }
+
+    // --- Axes & Labels (Synced Logic) ---
+    const axes = svg.selectAll(".axis-group")
+      .data(data)
+      .enter()
+      .append("g");
+
+    // Line starting from top (0 angle)
+    axes.append("line")
+      .attr("class", "radar-axis")
+      .attr("x1", 0)
+      .attr("y1", 0)
+      .attr("x2", (d, i) => radius * Math.cos(angleSlice * i - Math.PI / 2))
+      .attr("y2", (d, i) => radius * Math.sin(angleSlice * i - Math.PI / 2));
+
+    // Labels positioned with the same angle logic
+    axes.append("text")
+      .attr("class", "radar-label")
+      .attr("text-anchor", "middle")
+      .attr("dy", "0.35em")
+      .attr("x", (d, i) => (radius + 30) * Math.cos(angleSlice * i - Math.PI / 2))
+      .attr("y", (d, i) => (radius + 30) * Math.sin(angleSlice * i - Math.PI / 2))
+      .text(d => d.axis);
+
+    // --- Data Path (No CSS Rotation Used) ---
+    const rScale = d3.scaleLinear().domain([0, 1]).range([0, radius]);
+
+    // d3.lineRadial() treats 0 as 12 o'clock (Up)
+    const radarLine = d3.lineRadial()
+      .radius(d => rScale(d.value))
+      .angle((d, i) => i * angleSlice)
+      .curve(d3.curveLinearClosed);
+
+    svg.append("path")
+      .datum(data)
+      .attr("class", "radar-path")
+      .attr("d", radarLine);
+
+    // Points at vertices
+    svg.selectAll(".radar-circle")
+      .data(data)
+      .enter()
+      .append("circle")
+      .attr("class", "radar-circle")
+      .attr("cx", (d, i) => rScale(d.value) * Math.cos(angleSlice * i - Math.PI / 2))
+      .attr("cy", (d, i) => rScale(d.value) * Math.sin(angleSlice * i - Math.PI / 2))
+      .attr("r", 5);
+  }
+
+  loadData();
+</script>
+</body>
+</html>

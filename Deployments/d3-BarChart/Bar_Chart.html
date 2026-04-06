@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Categorical Explorer | IPEDS Data</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    :root {
+      --primary: #3498db;
+      --bg: #f4f7f9;
+      --card: #ffffff;
+      --text: #2c3e50;
+      --muted: #95a5a6;
+      --border: #edf2f7;
+    }
+
+    body {
+      margin: 0;
+      font-family: 'Inter', -apple-system, system-ui, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      display: flex;
+      justify-content: center;
+      padding: 40px 20px;
+    }
+
+    .main-card {
+      width: 100%;
+      max-width: 1100px;
+      background: var(--card);
+      border-radius: 24px;
+      box-shadow: 0 15px 45px rgba(0,0,0,0.06);
+      padding: 40px;
+    }
+
+    header { text-align: center; margin-bottom: 35px; }
+    h1 { margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -0.5px; }
+    .tagline { color: var(--muted); font-size: 14px; margin-top: 5px; }
+
+    /* Control Panel */
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 15px;
+      background: #f8fafc;
+      padding: 25px;
+      border-radius: 16px;
+      margin-bottom: 35px;
+      border: 1px solid var(--border);
+      align-items: flex-end;
+    }
+
+    .control-group { display: flex; flex-direction: column; gap: 8px; }
+    label { font-size: 11px; font-weight: 700; text-transform: uppercase; color: #7f8c8d; }
+
+    select, input {
+      padding: 10px 14px;
+      border-radius: 8px;
+      border: 1px solid #ddd;
+      font-size: 14px;
+      outline: none;
+      background: white;
+    }
+
+    button {
+      background: var(--primary);
+      color: white;
+      border: none;
+      padding: 12px;
+      border-radius: 8px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    button:hover { background: #2980b9; transform: translateY(-1px); }
+
+    /* Chart Area */
+    .chart-container { width: 100%; display: flex; justify-content: center; position: relative; min-height: 550px; }
+    .bar { fill: var(--primary); opacity: 0.85; transition: opacity 0.2s; cursor: pointer; }
+    .bar:hover { opacity: 1; }
+    
+    .axis-label { font-size: 11px; fill: #7f8c8d; }
+    
+    #tooltip {
+      position: absolute;
+      background: rgba(44, 62, 80, 0.95);
+      color: white;
+      padding: 10px 15px;      border-radius: 6px;
+      font-size: 12px;
+      pointer-events: none;
+      display: none;
+      z-index: 1000;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+    }
+
+    #status { font-size: 11px; color: var(--muted); text-align: center; margin-top: 15px; }
+  </style>
+</head>
+<body>
+
+<div class="main-card">
+  <header>
+    <h1>Categorical Insights</h1>
+    <div class="tagline">Institution Classifications & Sector Distributions (2017-2024)</div>
+  </header>
+
+  <div class="controls">
+    <div class="control-group">
+      <label>Dimension</label>
+      <select id="column-dropdown"></select>
+    </div>
+    <div class="control-group">
+      <label>Year</label>
+      <select id="year-dropdown"></select>
+    </div>
+    <div class="control-group">
+      <label>Display Mode</label>
+      <select id="chart-mode">
+        <option value="normal">Standard Bars</option>
+        <option value="polar">Polar / Rose</option>
+      </select>
+    </div>
+    <div class="control-group">
+      <label>Top Limit</label>
+      <input type="number" id="top-limit" value="12" min="3" max="50">
+    </div>
+    <button id="update-btn">Update View</button>
+  </div>
+
+  <div class="chart-container" id="viz-root"></div>
+  <div id="tooltip"></div>
+  <div id="status">Reading IPEDS Panel Data...</div>
+</div>
+
+<script>
+  let cachedData = [];
+  const margin = { top: 40, right: 40, bottom: 120, left: 80 };
+  const width = 900 - margin.left - margin.right;
+  const height = 550 - margin.top - margin.bottom;
+
+  function autoDetectCategorical(col, data) {
+    const sample = data.slice(0, 100).map(d => d[col]);
+    const uniqueCount = new Set(sample).size;
+    const firstVal = sample.find(v => v !== "" && v !== null);
+    return uniqueCount > 1 && uniqueCount < 60 && isNaN(parseFloat(firstVal));
+  }
+
+  async function appInit() {
+    try {
+      cachedData = await d3.csv("./ipeds_panel_2017_2023.csv");
+      
+      const colDropdown = d3.select("#column-dropdown");
+      const yearDropdown = d3.select("#year-dropdown");
+
+      const years = [...new Set(cachedData.map(d => d.year))].sort((a,b) => b-a);
+      yearDropdown.selectAll("option").data(years).enter().append("option")
+        .attr("value", d => d).text(d => `Year ${d}`);
+
+      const catCols = cachedData.columns.filter(c => autoDetectCategorical(c, cachedData));
+      colDropdown.selectAll("option").data(catCols).enter().append("option")
+        .attr("value", d => d).text(d => d.replace(/_/g, ' ').toUpperCase());
+
+      colDropdown.property("value", "sector_label");
+      
+      d3.select("#status").text(`System ready. ${cachedData.length} records parsed.`);
+      render();
+
+      d3.select("#update-btn").on("click", render);
+    } catch (e) {
+      console.error(e);
+      d3.select("#status").text("Error loading CSV. Run in a local web server environment.").style("color", "#e74c3c");
+    }
+  }
+
+  function render() {
+    const col = d3.select("#column-dropdown").property("value");
+    const year = d3.select("#year-dropdown").property("value");
+    const mode = d3.select("#chart-mode").property("value");
+    const limit = +d3.select("#top-limit").property("value");
+
+    const filtered = cachedData.filter(d => d.year === year && d[col]);
+    
+    const counts = d3.rollup(filtered, v => v.length, d => d[col]);
+    const data = Array.from(counts, ([label, value]) => ({ label, value }))
+                      .sort((a, b) => b.value - a.value)
+                      .slice(0, limit);
+
+    const root = d3.select("#viz-root");
+    root.html("");
+
+    if (mode === "normal") {
+      renderBars(data);
+    } else {
+      renderPolar(data);
+    }
+  }
+
+  function renderBars(data) {
+    const svg = d3.select("#viz-root").append("svg")
+                  .attr("width", width + margin.left + margin.right)
+                  .attr("height", height + margin.top + margin.bottom)
+                  .append("g").attr("transform", `translate(${margin.left}, ${margin.top})`);
+
+    const x = d3.scaleBand().domain(data.map(d => d.label)).range([0, width]).padding(0.35);
+    const y = d3.scaleLinear().domain([0, d3.max(data, d => d.value)]).nice().range([height, 0]);
+
+    svg.append("g").attr("transform", `translate(0, ${height})`)
+       .call(d3.axisBottom(x)).selectAll("text")
+       .attr("transform", "rotate(-35)").attr("text-anchor", "end").attr("class", "axis-label");
+
+    svg.append("g").call(d3.axisLeft(y).ticks(6)).attr("class", "axis-label");
+
+    const tooltip = d3.select("#tooltip");
+
+    svg.selectAll("rect").data(data).enter().append("rect")
+       .attr("class", "bar")
+       .attr("x", d => x(d.label))
+       .attr("width", x.bandwidth())
+       .attr("y", height)
+       .attr("height", 0)
+       .on("mouseover", (e, d) => {
+          tooltip.style("display", "block").html(`<strong>${d.label}</strong><br>Count: ${d.value.toLocaleString()}`);
+       })
+       .on("mousemove", (e) => {
+          tooltip.style("left", (e.pageX + 15) + "px").style("top", (e.pageY - 15) + "px");
+       })
+       .on("mouseout", () => tooltip.style("display", "none"))
+       .transition().duration(800)
+       .attr("y", d => y(d.value))
+       .attr("height", d => height - y(d.value));
+  }
+
+  function renderPolar(data) {
+    const radius = Math.min(width, height) / 2;
+    const svg = d3.select("#viz-root").append("svg")
+                  .attr("width", width + margin.left + margin.right)
+                  .attr("height", height + margin.top + margin.bottom)
+                  .append("g").attr("transform", `translate(${(width+margin.left+margin.right)/2}, ${(height+margin.top+margin.bottom)/2})`);
+
+    const angleScale = d3.scaleBand().domain(data.map(d => d.label)).range([0, 2 * Math.PI]);
+    const radiusScale = d3.scaleLinear().domain([0, d3.max(data, d => d.value)]).range([0, radius]);
+
+    const arc = d3.arc()
+                  .innerRadius(0)
+                  .outerRadius(d => radiusScale(d.value))
+                  .startAngle(d => angleScale(d.label))
+                  .endAngle(d => angleScale(d.label) + angleScale.bandwidth())
+                  .padAngle(0.03).padRadius(60);
+
+    const tooltip = d3.select("#tooltip");
+
+    svg.selectAll("path").data(data).enter().append("path")
+       .attr("fill", "#3498db") 
+       .attr("opacity", 0.8)
+       .attr("d", arc)
+       .on("mouseover", (e, d) => {
+          tooltip.style("display", "block").html(`<strong>${d.label}</strong><br>Institutions: ${d.value}`);
+       })
+       .on("mousemove", (e) => {
+          tooltip.style("left", (e.pageX + 15) + "px").style("top", (e.pageY - 15) + "px");
+       })
+       .on("mouseout", () => tooltip.style("display", "none"))
+       .attr("transform", "scale(0)")
+       .transition().duration(1000).attr("transform", "scale(1)");
+       
+    svg.selectAll("text").data(data).enter().append("text")
+       .attr("text-anchor", "middle")
+       .attr("transform", d => {
+          const a = angleScale(d.label) + angleScale.bandwidth()/2 - Math.PI/2;
+          const r = radius + 25;
+          return `translate(${r * Math.cos(a)}, ${r * Math.sin(a)})`;
+       })
+       .style("font-size", "10px").style("font-weight", "600").style("fill", "#7f8c8d")
+       .text(d => d.label.length > 18 ? d.label.substring(0,15)+'...' : d.label);
+  }
+
+  appInit();
+</script>
+</body>
+</html>
