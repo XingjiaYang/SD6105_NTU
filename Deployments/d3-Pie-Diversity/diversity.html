@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Campus Environment: Residency & Race Diversity</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f4f7f9; margin: 0; padding: 20px; }
+        .card { max-width: 1000px; margin: auto; background: white; padding: 30px; border-radius: 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.08); }
+        h2 { text-align: center; color: #2c3e50; margin-bottom: 5px; }
+        p.desc { text-align: center; color: #7f8c8d; font-size: 14px; margin-bottom: 30px; }
+
+        .controls { 
+            display: grid; grid-template-columns: 1fr 150px; gap: 15px; 
+            margin-bottom: 40px; padding: 20px; background: #f8f9fa; border-radius: 12px;
+        }
+        .control-group { display: flex; flex-direction: column; gap: 8px; }
+        label { font-size: 11px; font-weight: bold; color: #666; text-transform: uppercase; }
+        input, select { padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; }
+
+        .charts-wrapper { display: flex; justify-content: space-around; flex-wrap: wrap; gap: 20px; }
+        .chart-box { text-align: center; flex: 1; min-width: 300px; }
+        .chart-title { font-size: 16px; font-weight: bold; color: #34495e; margin-bottom: 15px; }
+        
+        #tooltip { position: absolute; background: rgba(0,0,0,0.8); color: white; padding: 8px 12px; border-radius: 4px; font-size: 12px; pointer-events: none; display: none; z-index: 100; }
+        
+        .legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 20px; font-size: 11px; }
+        .legend-item { display: flex; align-items: center; gap: 5px; }
+        .legend-color { width: 12px; height: 12px; border-radius: 2px; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2>Campus Environment Snapshot</h2>
+    <p class="desc">Analyze the student body composition: Where do they come from and what is their ethnic background?</p>
+    
+    <div class="controls">
+        <div class="control-group">
+            <label>1. Search Institution</label>
+            <input type="text" id="school-input" placeholder="Search school name..." list="school-list">
+            <datalist id="school-list"></datalist>
+        </div>
+        <div class="control-group">
+            <label>2. Academic Year</label>
+            <select id="year-sel"></select>
+        </div>
+    </div>
+
+    <div class="charts-wrapper">
+        <div class="chart-box">
+            <div class="chart-title">Student Origin (Residency)</div>
+            <div id="residency-chart"></div>
+            <div id="residency-legend" class="legend"></div>
+        </div>
+        
+        <div class="chart-box">
+            <div class="chart-title">Undergraduate Diversity (Race)</div>
+            <div id="race-chart"></div>
+            <div id="race-legend" class="legend"></div>
+        </div>
+    </div>
+    
+    <div id="tooltip"></div>
+</div>
+
+<script>
+// Global config for donuts
+const width = 320, height = 320, radius = Math.min(width, height) / 2;
+let fullDataset = [];
+
+// Column definitions strictly based on ipeds_panel_metadata.md
+const residencyMetrics = [
+    { key: "ftug_instate_pct", label: "In-State" },
+    { key: "ftug_outstate_pct", label: "Out-of-State" },
+    { key: "ftug_foreign_pct", label: "International" },
+    { key: "ftug_unknown_pct", label: "Unknown" }
+];
+
+const raceMetrics = [
+    { key: "ug_pct_white", label: "White" },
+    { key: "ug_pct_asian", label: "Asian" },
+    { key: "ug_pct_black", label: "Black" },
+    { key: "ug_pct_hispanic", label: "Hispanic" },
+    { key: "ug_pct_nonresident_alien", label: "Non-resident Intl" },
+    { key: "ug_pct_pacific_islander", label: "Pacific Islander" },
+    { key: "ug_pct_american_indian", label: "American Indian" },
+    { key: "ug_pct_two_or_more_races", label: "Multi-race" }
+];
+
+// Color schemes
+const residencyColors = d3.scaleOrdinal(["#3498db", "#e67e22", "#2ecc71", "#95a5a6"]);
+const raceColors = d3.scaleOrdinal(d3.schemeTableau10);
+
+// Load local CSV
+d3.csv("ipeds_panel_2017_2023.csv", d3.autoType).then(data => {
+    fullDataset = data;
+
+    // Populate UI Dropdowns
+    const schools = [...new Set(data.map(d => d.institution_name))].sort();
+    d3.select("#school-list").selectAll("option").data(schools).enter().append("option").attr("value", d => d);
+
+    const years = [...new Set(data.map(d => d.year))].sort((a,b) => b-a);
+    d3.select("#year-sel").selectAll("option").data(years).enter().append("option").text(d => d);
+
+    // Initial default school
+    d3.select("#school-input").property("value", "University of Illinois Urbana-Champaign");
+    
+    // Binding update events
+    d3.selectAll("#school-input, #year-sel").on("input", refreshUI);
+    refreshUI();
+});
+
+/**
+ * Updates both Donut charts based on the current selection
+ */
+function refreshUI() {
+    const school = d3.select("#school-input").property("value");
+    const year = +d3.select("#year-sel").property("value");
+    const record = fullDataset.find(d => d.institution_name === school && d.year === year);
+
+    if (!record) return;
+
+    // Execute drawing for both metrics
+    renderDonut("#residency-chart", "#residency-legend", record, residencyMetrics, residencyColors, "ORIGIN");
+    renderDonut("#race-chart", "#race-legend", record, raceMetrics, raceColors, "RACE");
+}
+
+/**
+ * Generic Donut rendering function
+ */
+function renderDonut(containerId, legendId, record, metrics, colorScale, centerText) {
+    d3.select(containerId).selectAll("*").remove();
+    d3.select(legendId).selectAll("*").remove();
+
+    // Mapping record data to chart values
+    const chartData = metrics.map(m => ({
+        label: m.label,
+        value: record[m.key] || 0
+    })).filter(d => d.value > 0);
+
+    const svg = d3.select(containerId).append("svg")
+        .attr("width", width)
+        .attr("height", height)
+        .append("g")
+        .attr("transform", `translate(${width / 2}, ${height / 2})`);
+
+    const pieGenerator = d3.pie().value(d => d.value).sort(null);
+    const arcGenerator = d3.arc().innerRadius(radius * 0.6).outerRadius(radius * 0.9);
+    const arcHover = d3.arc().innerRadius(radius * 0.6).outerRadius(radius * 0.95);
+
+    // Render Slices
+    const paths = svg.selectAll("path")
+        .data(pieGenerator(chartData))
+        .enter().append("path")
+        .attr("d", arcGenerator)
+        .attr("fill", d => colorScale(d.data.label))
+        .attr("stroke", "#fff")
+        .style("stroke-width", "2px")
+        .style("cursor", "pointer");
+
+    // Interaction Tooltip Logic
+    paths.on("mouseover", function(event, d) {
+        d3.select(this).transition().duration(200).attr("d", arcHover);
+        d3.select("#tooltip").style("display", "block")
+            .html(`<strong>${d.data.label}</strong>: ${d.data.value.toFixed(1)}%`);
+    })
+    .on("mousemove", event => {
+        d3.select("#tooltip").style("left", (event.pageX + 15) + "px").style("top", (event.pageY - 15) + "px");
+    })
+    .on("mouseout", function() {
+        d3.select(this).transition().duration(200).attr("d", arcGenerator);
+        d3.select("#tooltip").style("display", "none");
+    });
+
+    // Center Display Label
+    svg.append("text")
+        .attr("text-anchor", "middle")
+        .attr("dy", "0.35em")
+        .style("font-size", "14px")
+        .style("font-weight", "bold")
+        .style("fill", "#2c3e50")
+        .text(centerText);
+
+    // Build Legend Items
+    const legends = d3.select(legendId).selectAll(".legend-item")
+        .data(chartData)
+        .enter().append("div")
+        .attr("class", "legend-item");
+
+    legends.append("div")
+        .attr("class", "legend-color")
+        .style("background-color", d => colorScale(d.label));
+
+    legends.append("span").text(d => `${d.label} (${d.value.toFixed(1)}%)`);
+}
+</script>
+</body>
+</html>
