@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>College Map: Pure Data & Pan</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://d3js.org/topojson.v3.min.js"></script>
+    <style>
+        body { font-family: -apple-system, sans-serif; background: #f4f7f9; margin: 0; padding: 20px; }
+        .card { max-width: 1200px; margin: auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.05); }
+        h2 { text-align: center; color: #2c3e50; margin-top: 0; }
+        
+        .controls { display: flex; justify-content: center; gap: 15px; margin-bottom: 25px; flex-wrap: wrap; background: #f8f9fa; padding: 15px; border-radius: 10px; }
+        .control-group { display: flex; flex-direction: column; gap: 5px; }
+        label { font-size: 11px; font-weight: bold; color: #7f8c8d; text-transform: uppercase; }
+        select { padding: 8px 12px; border-radius: 6px; border: 1px solid #dcdfe6; cursor: pointer; background: white; font-size: 13px; }
+
+        #map-container { position: relative; border: 1px solid #eee; border-radius: 8px; background: #fff; overflow: hidden; height: 600px; cursor: grab; }
+        #map-container:active { cursor: grabbing; }
+        
+        .state { stroke: #ffffff; stroke-width: 0.5; transition: fill 0.3s; }
+        .state:hover { stroke: #333; stroke-width: 1.2; }
+        
+        /* 点的高密度透明叠加风格 */
+        .dot { stroke: none; opacity: 0.45; pointer-events: all; }
+        .dot:hover { stroke: #000; stroke-width: 1; opacity: 1; }
+
+        #tooltip { position: absolute; background: rgba(15, 23, 42, 0.95); color: white; padding: 10px; border-radius: 4px; font-size: 12px; pointer-events: none; display: none; z-index: 1000; }
+        .legend { display: flex; justify-content: center; gap: 25px; margin-top: 15px; font-size: 13px; font-weight: 500; }
+        
+        .ui-hint { text-align: center; font-size: 12px; color: #95a5a6; margin-top: 5px; font-style: italic; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2>US Higher Education Explorer</h2>
+    
+    <div class="controls">
+        <div class="control-group">
+            <label>1. Academic Year</label>
+            <select id="year-sel"></select>
+        </div>
+        <div class="control-group">
+            <label>2. Focus State (Fly To)</label>
+            <select id="focus-sel">
+                <option value="all">US Total (Overview)</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label>3. Background (Choropleth)</label>
+            <select id="bg-metric">
+                <option value="tuition_fees_instate">Avg Tuition (In-State)</option>
+                <option value="admission_rate">Avg Admission Rate</option>
+                <option value="COUNT">Institution Count</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label>4. Dot Size (By Scale)</label>
+            <select id="size-metric">
+                <option value="total_enrollment" selected>Total Enrollment</option>
+                <option value="applicants_total">Total Applicants</option>
+                <option value="instruction_expense">Instructional Expense</option>
+            </select>
+        </div>
+    </div>
+
+    <div id="map-container">
+        <div id="tooltip"></div>
+    </div>
+    
+    <div class="ui-hint">💡 Scroll to Zoom. Click and Drag to Pan. Double Click background to Reset.</div>
+
+    <div class="legend">
+        <span style="color: #3498db;">● Public</span>
+        <span style="color: #e67e22;">● Private</span>
+        <span style="color: #95a5a6;">● Unknown</span>
+    </div>
+</div>
+
+<script>
+const width = 960, height = 600;
+const svg = d3.select("#map-container").append("svg").attr("viewBox", [0, 0, width, height]);
+
+const zoom = d3.zoom()
+    .scaleExtent([1, 8])
+    .on("zoom", handleZoom);
+
+svg.call(zoom);
+
+const g = svg.append("g"); 
+const projection = d3.geoAlbersUsa().scale(1100).translate([width / 2, height / 2]);
+const pathGen = d3.geoPath().projection(projection);
+
+let globalData, stateFeatures;
+let currentTransform = d3.zoomIdentity;
+
+Promise.all([
+    d3.json("https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"),
+    d3.csv("ipeds_panel_2017_2023.csv", d3.autoType)
+]).then(([topology, data]) => {
+    stateFeatures = topojson.feature(topology, topology.objects.states).features;
+    globalData = data;
+
+    const years = [...new Set(data.map(d => d.year))].sort((a,b) => b-a);
+    d3.select("#year-sel").selectAll("option").data(years).enter().append("option").text(d => d);
+
+    const uniqueStates = new Map();
+    data.forEach(d => {
+        if (d.fips_state > 0 && d.state_abbr) uniqueStates.set(d.fips_state, d.state_abbr);
+    });
+    const stateArray = Array.from(uniqueStates.entries())
+        .map(([fips, abbr]) => ({ fips, abbr }))
+        .sort((a, b) => a.abbr.localeCompare(b.abbr));
+
+    d3.select("#focus-sel").selectAll(".st-opt")
+        .data(stateArray).enter().append("option")
+        .attr("class", "st-opt")
+        .attr("value", d => d.fips).text(d => d.abbr);
+
+    updateMap();
+
+    d3.select("#focus-sel").on("change", function() {
+        const val = this.value;
+        if (val === "all") resetMap();
+        else {
+            const feat = stateFeatures.find(f => +f.id === +val);
+            if (feat) flyToState(feat);
+        }
+    });
+
+    d3.selectAll("#year-sel, #bg-metric, #size-metric").on("change", updateMap);
+    svg.on("dblclick.zoom", resetMap);
+});
+
+function handleZoom(event) {
+    currentTransform = event.transform;
+    g.attr("transform", currentTransform);
+    
+    const sizeKey = d3.select("#size-metric").property("value");
+    const rScale = d3.scaleSqrt().domain(d3.extent(globalData, d => d[sizeKey])).range([1.5, 12]);
+    
+    g.selectAll(".dot").attr("r", d => rScale(d[sizeKey] || 0) / Math.pow(currentTransform.k, 0.6));
+}
+
+function updateMap() {
+    const year = +d3.select("#year-sel").property("value");
+    const bgKey = d3.select("#bg-metric").property("value");
+    const sizeKey = d3.select("#size-metric").property("value");
+
+    // 1. 数据预处理、正则拦截与去重逻辑
+    // Regex explanation: 
+    // /office|administration|system/i (忽略大小写) 会拦截例如 "SUNY System Office", "University of Texas System Administration"
+    const adminRegex = /office|administration/i;
+
+    let yearData = globalData.filter(d => 
+        d.year === year && 
+        d.longitude && 
+        d.latitude && 
+        d.institution_name && // 确保有名字
+        !adminRegex.test(d.institution_name) // 【核心修复】拦截所有行政办公室/管理中心
+    );
+    
+    // 按在校人数降序排列，确保留存的是最大主校区
+    yearData.sort((a, b) => (b.total_enrollment || 0) - (a.total_enrollment || 0));
+    
+    const cleanMap = new Map();
+    yearData.forEach(d => {
+        const key = `${d.institution_name}_${d.state_abbr}`;
+        if (!cleanMap.has(key)) {
+            cleanMap.set(key, d);
+        }
+    });
+    yearData = Array.from(cleanMap.values()); // 获取去重后的干净数据
+
+    // 2. 底图渲染
+    const stateStats = d3.rollup(yearData, 
+        v => bgKey === "COUNT" ? v.length : d3.mean(v, d => d[bgKey]),
+        d => d.fips_state
+    );
+    const colorScale = d3.scaleSequential(d3.interpolateGreens)
+        .domain(d3.extent(Array.from(stateStats.values())));
+
+    g.selectAll(".state").data(stateFeatures, d => d.id)
+        .join("path")
+        .attr("class", "state")
+        .attr("d", pathGen)
+        .on("click", (e, d) => {
+            d3.select("#focus-sel").property("value", d.id);
+            flyToState(d);
+        })
+        .transition().duration(500)
+        .attr("fill", d => {
+            const val = stateStats.get(+d.id);
+            return val ? colorScale(val) : "#f8fafc";
+        });
+
+    // 3. 散点渲染
+    const rScale = d3.scaleSqrt().domain(d3.extent(globalData, d => d[sizeKey])).range([1.5, 12]);
+    const points = yearData.filter(d => projection([d.longitude, d.latitude]));
+
+    g.selectAll(".dot").data(points, d => d.unitid)
+        .join(
+            enter => enter.append("circle").attr("class", "dot")
+                .attr("cx", d => projection([d.longitude, d.latitude])[0])
+                .attr("cy", d => projection([d.longitude, d.latitude])[1])
+                .attr("r", 0),
+            update => update,
+            exit => exit.remove()
+        )
+        .transition().duration(800)
+        .attr("cx", d => projection([d.longitude, d.latitude])[0])
+        .attr("cy", d => projection([d.longitude, d.latitude])[1])
+        .attr("r", d => rScale(d[sizeKey] || 0) / Math.pow(currentTransform.k, 0.6))
+        .attr("fill", d => {
+            if (!d.control_label) return "#95a5a6";
+            return d.control_label.includes("Public") ? "#3498db" : "#e67e22";
+        });
+
+    // 4. Tooltip
+    g.selectAll(".dot")
+        .on("mouseover", (event, d) => {
+            d3.select("#tooltip").style("display", "block")
+                .html(`<strong>${d.institution_name}</strong><br>
+                       <span style="color:#cbd5e0">${d.control_label || 'Unknown Type'}</span>
+                       <hr style="border:0; border-top:1px solid #4a5568; margin:6px 0;">
+                       Enrollment: ${d.total_enrollment ? d.total_enrollment.toLocaleString() : 'N/A'}<br>
+                       Tuition: $${d.tuition_fees_instate ? d.tuition_fees_instate.toLocaleString() : 'N/A'}`);
+        })
+        .on("mousemove", event => {
+            const b = document.getElementById('map-container').getBoundingClientRect();
+            d3.select("#tooltip").style("left", (event.clientX - b.left + 15) + "px")
+                                 .style("top", (event.clientY - b.top - 15) + "px");
+        })
+        .on("mouseout", () => d3.select("#tooltip").style("display", "none"));
+}
+
+function flyToState(feature) {
+    const bounds = pathGen.bounds(feature);
+    const dx = bounds[1][0] - bounds[0][0];
+    const dy = bounds[1][1] - bounds[0][1];
+    const x = (bounds[0][0] + bounds[1][0]) / 2;
+    const y = (bounds[0][1] + bounds[1][1]) / 2;
+    
+    const scale = Math.max(1, Math.min(8, 0.85 / Math.max(dx / width, dy / height)));
+    const translate = [width / 2 - scale * x, height / 2 - scale * y];
+
+    svg.transition().duration(750).call(
+        zoom.transform, 
+        d3.zoomIdentity.translate(translate[0], translate[1]).scale(scale)
+    );
+}
+
+function resetMap() {
+    d3.select("#focus-sel").property("value", "all");
+    svg.transition().duration(750).call(zoom.transform, d3.zoomIdentity);
+}
+</script>
+</body>
+</html>
