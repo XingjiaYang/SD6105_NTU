@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trajectory Explorer - IPEDS Institution Trajectory Visualization</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.137.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.137.0/examples/js/controls/OrbitControls.js"></script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <h1>Trajectory Explorer</h1>
+  <p class="subtitle">IPEDS Institution Scatter + Time Trajectory Visualization (2D / 3D) · <span id="load-status">Loading…</span></p>
+</header>
+
+<div class="controls">
+  <div class="control-group">
+    <label for="select-x">X Axis</label>
+    <select id="select-x"></select>
+  </div>
+  <div class="control-group">
+    <label for="select-y">Y Axis</label>
+    <select id="select-y"></select>
+  </div>
+  <div class="control-group">
+    <label for="select-color">Color By</label>
+    <select id="select-color"></select>
+  </div>
+  <div class="control-group time-range-group">
+    <label>Time Range</label>
+    <div class="time-range-bar" id="time-range-bar">
+      <div class="time-range-track"></div>
+      <div class="time-range-selected" id="time-range-selected"></div>
+      <div class="time-range-handle time-range-handle-min" id="time-handle-min"></div>
+      <div class="time-range-handle time-range-handle-max" id="time-handle-max"></div>
+      <div class="time-range-ticks" id="time-range-ticks"></div>
+    </div>
+    <span id="year-label">2017 – 2024</span>
+  </div>
+  <div class="control-group">
+    <label>
+      <input type="checkbox" id="toggle-smooth" checked> Smooth
+    </label>
+  </div>
+  <div class="control-group btn-group">
+    <button id="toggle-mode" class="ctrl-btn mode-btn" title="Toggle 2D / 3D view">3D</button>
+    <button id="toggle-dots" class="ctrl-btn active" title="Show/hide data points">Dots</button>
+    <button id="toggle-tooltip" class="ctrl-btn active" title="Enable/disable tooltip">Tooltip</button>
+    <button id="btn-reset-view" class="ctrl-btn" title="Reset to X-Y plane top-down view">Reset View</button>
+  </div>
+</div>
+
+<div class="search-bar">
+  <div class="search-header">
+    <label for="search-input">Search Institutions</label>
+    <div class="search-mode-toggle">
+      <button id="search-mode-name" class="search-mode-btn active">By Name</button>
+      <button id="search-mode-state" class="search-mode-btn">By State</button>
+    </div>
+  </div>
+  <div class="search-wrapper">
+    <input type="text" id="search-input" placeholder="Enter institution name (e.g. MIT, Harvard)…" autocomplete="off">
+    <button id="search-clear" class="search-clear" title="Clear search">✕</button>
+  </div>
+  <div id="search-results" class="search-results"></div>
+</div>
+
+<div class="filters">
+  <div class="filter-slot" id="filter-slot-0">
+    <div class="filter-header">
+      <label for="filter-dim-0">Filter 1</label>
+      <select id="filter-dim-0"><option value="">No filter</option></select>
+    </div>
+    <div class="filter-values" id="filter-values-0"></div>
+  </div>
+  <div class="filter-slot" id="filter-slot-1">
+    <div class="filter-header">
+      <label for="filter-dim-1">Filter 2</label>
+      <select id="filter-dim-1"><option value="">No filter</option></select>
+    </div>
+    <div class="filter-values" id="filter-values-1"></div>
+  </div>
+</div>
+
+<div class="chart-layout">
+  <div id="chart-container">
+    <svg id="chart-2d"></svg>
+    <div id="chart-3d"></div>
+    <div id="tooltip"></div>
+  </div>
+  <div class="chart-sidebar">
+    <button id="btn-play" class="ctrl-btn sidebar-play" title="Play trajectory animation">▶ Play</button>
+    <div class="sidebar-legend-label">Color Legend</div>
+    <div id="legend"></div>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="trajectory-chart.js"></script>
+<script src="trajectory-chart-3d.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
