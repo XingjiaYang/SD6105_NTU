@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Top 10 US Universities - Enrollment Race</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { 
+            font-family: 'Segoe UI', sans-serif; 
+            margin: 0; padding: 40px 0; background-color: #f4f7f6;
+            display: flex; flex-direction: column; align-items: center; 
+        }
+        h2 { color: #2c3e50; margin-bottom: 20px; font-size: 28px; }
+
+        .controls { 
+            width: 100%; max-width: 1100px; margin-bottom: 20px; padding: 20px; 
+            background: #ffffff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            display: flex; justify-content: center; align-items: center; gap: 15px;
+        }
+
+        #schoolInput { 
+            width: 350px; padding: 10px 15px; border-radius: 8px; 
+            border: 2px solid #ddd; font-size: 15px; outline: none;
+        }
+
+        button {
+            padding: 10px 20px; font-size: 15px; font-weight: 600; cursor: pointer;
+            border-radius: 8px; border: none; transition: 0.2s;
+        }
+        #playBtn { background-color: #4e79a7; color: white; min-width: 160px; }
+        #playBtn:hover { background-color: #3b5d81; }
+        #clearBtn { background-color: #e0e0e0; color: #333; }
+
+        #chart { 
+            background: #ffffff; border-radius: 12px; 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.05); 
+            padding: 30px; position: relative; 
+        }
+
+        .year-label {
+            font-size: 100px; font-weight: bold; 
+            position: absolute; 
+            right: 50px;   
+            bottom: 120px; 
+            pointer-events: none; 
+            color: #000000; 
+            opacity: 0.15;
+            z-index: 0;
+            line-height: 1;
+        }
+
+        .bar { transition: opacity 0.2s; cursor: pointer; }
+        .bar:hover { opacity: 0.5 !important; } 
+
+        .label { font-size: 13px; font-weight: 600; fill: #333; }
+        .value-label { font-size: 12px; fill: #666; }
+        .axis-label { font-size: 14px; font-weight: bold; fill: #555; }
+    </style>
+</head>
+<body>
+
+    <h2>US Universities Enrollment Race (Top 10)</h2>
+    
+    <div class="controls">
+        <label for="schoolInput"><strong>Highlight School:</strong></label>
+        <input list="schoolList" id="schoolInput" placeholder="Search school...">
+        <datalist id="schoolList"></datalist>
+        <button id="clearBtn">Clear</button>
+        <button id="playBtn">Play Race ▶</button>
+    </div>
+
+    <div id="chart">
+        <div class="year-label" id="yearOverlay">2017</div>
+    </div>
+
+    <script>
+        const margin = {top: 40, right: 100, bottom: 40, left: 250},
+              width = 1100 - margin.left - margin.right,
+              height = 600 - margin.top - margin.bottom;
+
+        const svg = d3.select("#chart")
+            .append("svg")
+            .attr("width", width + margin.left + margin.right)
+            .attr("height", height + margin.top + margin.bottom)
+            .append("g")
+            .attr("transform", `translate(${margin.left},${margin.top})`);
+
+        let allData = [];
+        let years = [];
+        let currentYearIndex = 0;
+        let isPlaying = false;
+        let interval;
+        let highlightedSchool = "";
+
+        const topN = 10;
+        const duration = 1000; 
+
+        const x = d3.scaleLinear().range([0, width]);
+        const y = d3.scaleBand().domain(d3.range(topN)).range([0, height]).padding(0.1);
+        const color = d3.scaleOrdinal(d3.schemeTableau10);
+
+        d3.csv("ipeds_panel_2017_2023.csv").then(data => {
+            data.forEach(d => {
+                d.total_enrollment = +d.total_enrollment || 0;
+                d.year = +d.year;
+            });
+            allData = data;
+            years = Array.from(new Set(data.map(d => d.year))).sort();
+
+            const schools = Array.from(new Set(data.map(d => d.institution_name))).sort();
+            const dl = d3.select("#schoolList");
+            schools.forEach(s => dl.append("option").attr("value", s));
+
+            d3.select("#schoolInput").on("input", function() {
+                highlightedSchool = this.value;
+                update(years[currentYearIndex]);
+            });
+
+            d3.select("#clearBtn").on("click", () => {
+                d3.select("#schoolInput").property("value", "");
+                highlightedSchool = "";
+                update(years[currentYearIndex]);
+            });
+
+            d3.select("#playBtn").on("click", function() {
+                if (isPlaying) {
+                    stopRace();
+                } else {
+                    if (currentYearIndex >= years.length - 1) {
+                        currentYearIndex = 0;
+                        update(years[0]); 
+                    }
+                    startRace();
+                }
+            });
+
+            function startRace() {
+                isPlaying = true;
+                d3.select("#playBtn").text("Pause Race ⏸");
+                
+                interval = setInterval(() => {
+                    currentYearIndex++;
+                    if (currentYearIndex >= years.length) {
+                        stopRace();
+                        d3.select("#playBtn").text("Restart Race ↺");
+                        currentYearIndex = years.length - 1;
+                    } else {
+                        update(years[currentYearIndex]);
+                    }
+                }, duration + 200);
+            }
+
+            function stopRace() {
+                isPlaying = false;
+                clearInterval(interval);
+                d3.select("#playBtn").text("Play Race ▶");
+            }
+
+            svg.append("g")
+                .attr("class", "x-axis")
+                .attr("transform", `translate(0, ${height})`);
+
+            update(years[0]);
+        });
+
+        function update(year) {
+            d3.select("#yearOverlay").text(year);
+
+            let yearData = allData.filter(d => d.year === year)
+                .sort((a, b) => b.total_enrollment - a.total_enrollment)
+                .slice(0, topN);
+
+            x.domain([0, d3.max(yearData, d => d.total_enrollment) * 1.1]);
+            svg.select(".x-axis").transition().duration(duration).call(d3.axisBottom(x).ticks(5).tickFormat(d3.format(".2s")));
+
+            const bars = svg.selectAll(".bar-group")
+                .data(yearData, d => d.institution_name);
+
+            bars.exit().transition().duration(duration)
+                .attr("transform", `translate(0, ${height + 100})`)
+                .remove();
+
+            const enter = bars.enter().append("g")
+                .attr("class", "bar-group")
+                .attr("transform", `translate(0, ${height + 100})`);
+
+            enter.append("rect")
+                .attr("class", "bar")
+                .attr("height", y.bandwidth())
+                .attr("fill", d => color(d.institution_name));
+
+            enter.append("text")
+                .attr("class", "label")
+                .attr("x", -10)
+                .attr("y", y.bandwidth() / 2)
+                .attr("dy", ".35em")
+                .style("text-anchor", "end");
+
+            enter.append("text")
+                .attr("class", "value-label")
+                .attr("y", y.bandwidth() / 2)
+                .attr("dy", ".35em");
+
+            const updateGrp = enter.merge(bars);
+
+            updateGrp.transition().duration(duration).ease(d3.easeLinear)
+                .attr("transform", (d, i) => `translate(0, ${y(i)})`);
+
+            updateGrp.select("rect")
+                .transition().duration(duration)
+                .attr("width", d => x(d.total_enrollment))
+                .attr("fill", d => d.institution_name === highlightedSchool ? "#e15759" : color(d.institution_name))
+                .attr("stroke", d => d.institution_name === highlightedSchool ? "#333" : "none")
+                .attr("stroke-width", "3px")
+                .style("opacity", d => (highlightedSchool === "" || d.institution_name === highlightedSchool) ? 1 : 0.3);
+
+            updateGrp.select(".label").text(d => d.institution_name);
+
+            updateGrp.select(".value-label")
+                .transition().duration(duration)
+                .attr("x", d => x(d.total_enrollment) + 10)
+                .text(d => d3.format(",")(d.total_enrollment));
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>US Student Demographics Map</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://d3js.org/topojson.v3.min.js"></script>
+    <style>
+        body { 
+            font-family: 'Segoe UI', sans-serif; 
+            margin: 0; padding: 40px 0; background-color: #f4f7f6;
+            display: flex; flex-direction: column; align-items: center; 
+        }
+        h2 { color: #2c3e50; margin-bottom: 20px; font-size: 28px; }
+        .controls { 
+            width: 100%; max-width: 1100px; margin-bottom: 20px; padding: 25px; 
+            background: #ffffff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            display: flex; justify-content: center; align-items: center; gap: 20px;
+        }
+        select, input[type=range] { padding: 10px; border-radius: 8px; border: 1px solid #ddd; font-size: 16px; }
+        #chart { background: #ffffff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.05); padding: 40px; position: relative; }
+        .state { stroke: #fff; stroke-width: 0.5px; transition: opacity 0.2s; cursor: pointer; }
+        .state:hover { opacity: 0.6; }
+        .tooltip {
+            position: absolute; padding: 12px; background: rgba(255,255,255,0.98);
+            border-radius: 8px; pointer-events: none; opacity: 0;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.15); border: 1px solid #eee; font-size: 14px;
+        }
+        .year-label { 
+            font-size: 100px; font-weight: bold; position: absolute; 
+            right: 150px; top: 0px; pointer-events: none; 
+            color: #000; opacity: 0.12; 
+        }
+    </style>
+</head>
+<body>
+
+    <h2>US Student Demographic Distribution by State</h2>
+    
+    <div class="controls">
+        <label><strong>Ethnicity:</strong></label>
+        <select id="ethnicitySelect">
+            <option value="pct_white">White</option>
+            <option value="pct_black">Black</option>
+            <option value="pct_hispanic">Hispanic</option>
+            <option value="pct_asian">Asian</option>
+            <option value="pct_others">Others</option>
+        </select>
+
+        <label><strong>Year:</strong></label>
+        <input type="range" id="yearSlider" min="2017" max="2023" step="1" value="2017">
+        <span id="yearValDisplay">2017</span>
+    </div>
+
+    <div id="chart">
+        <div class="year-label" id="yearOverlay">2017</div>
+    </div>
+    <div id="tooltip" class="tooltip"></div>
+
+    <script>
+        const width = 1100, height = 750;
+        const svg = d3.select("#chart").append("svg").attr("width", width).attr("height", height);
+        const projection = d3.geoAlbersUsa().translate([width / 2, height / 2 + 30]).scale(1350);
+        const path = d3.geoPath().projection(projection);
+        const tooltip = d3.select("#tooltip");
+
+        const colorSchemes = {
+            'pct_white': d3.schemeBlues[9],
+            'pct_black': d3.schemePurples[9],
+            'pct_hispanic': d3.schemeGreens[9],
+            'pct_asian': d3.schemeOranges[9],
+            'pct_others': d3.schemeGreys[9]
+        };
+
+        const abbrToFull = {
+            'AL':'Alabama','AK':'Alaska','AZ':'Arizona','AR':'Arkansas','CA':'California','CO':'Colorado','CT':'Connecticut','DE':'Delaware','FL':'Florida','GA':'Georgia','HI':'Hawaii','ID':'Idaho','IL':'Illinois','IN':'Indiana','IA':'Iowa','KS':'Kansas','KY':'Kentucky','LA':'Louisiana','ME':'Maine','MD':'Maryland','MA':'Massachusetts','MI':'Michigan','MN':'Minnesota','MS':'Mississippi','MO':'Missouri','MT':'Montana','NE':'Nebraska','NV':'Nevada','NH':'New Hampshire','NJ':'New Jersey','NM':'New Mexico','NY':'New York','NC':'North Carolina','ND':'North Dakota','OH':'Ohio','OK':'Oklahoma','OR':'Oregon','PA':'Pennsylvania','RI':'Rhode Island','SC':'South Carolina','SD':'South Dakota','TN':'Tennessee','TX':'Texas','UT':'Utah','VT':'Vermont','VA':'Virginia','WA':'Washington','WV':'West Virginia','WI':'Wisconsin','WY':'Wyoming','DC':'District of Columbia'
+        };
+
+        let rawData = [];
+        let geoJson = null;
+
+        Promise.all([
+            d3.json("https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json"),
+            d3.csv("ipeds_panel_2017_2023.csv")
+        ]).then(([us, data]) => {
+            geoJson = topojson.feature(us, us.objects.states);
+            data.forEach(d => {
+                d.total_enrollment = +d.total_enrollment || 0;
+                d.year = +d.year;
+                d.pct_white = +d.pct_white || 0;
+                d.pct_black = +d.pct_black || 0;
+                d.pct_hispanic = +d.pct_hispanic || 0;
+                d.pct_asian = +d.pct_asian || 0;
+                d.pct_others = (+d.pct_american_indian || 0) + (+d.pct_pacific_islander || 0) + 
+                               (+d.pct_two_or_more || 0) + (+d.pct_race_unknown || 0) + 
+                               (+d.pct_nonresident_alien || 0);
+                d.full_name = abbrToFull[d.state_abbr] || "Unknown";
+            });
+            rawData = data;
+            updateMap();
+        });
+
+        function updateMap() {
+            const selectedYear = +d3.select("#yearSlider").property("value");
+            const selectedEth = d3.select("#ethnicitySelect").property("value");
+            
+            d3.select("#yearValDisplay").text(selectedYear);
+            d3.select("#yearOverlay").text(selectedYear);
+
+            const colorScale = d3.scaleQuantile().range(colorSchemes[selectedEth]);
+
+            const yearFiltered = rawData.filter(d => d.year === selectedYear && d.total_enrollment > 0);
+            const stateAggr = d3.rollups(
+                yearFiltered,
+                v => {
+                    const totalPop = d3.sum(v, d => d.total_enrollment);
+                    const weightedSum = d3.sum(v, d => (d[selectedEth] * d.total_enrollment));
+                    return weightedSum / totalPop;
+                },
+                d => d.full_name
+            );
+
+            const stateMap = new Map(stateAggr);
+            const allValues = Array.from(stateMap.values());
+            if (allValues.length > 0) colorScale.domain(allValues);
+
+            const states = svg.selectAll(".state").data(geoJson.features, d => d.properties.name);
+
+            states.enter()
+                .append("path")
+                .attr("class", "state")
+                .attr("d", path)
+                .merge(states)
+                .transition().duration(400)
+                .attr("fill", d => {
+                    const val = stateMap.get(d.properties.name);
+                    return (val !== undefined) ? colorScale(val) : "#eee";
+                });
+
+            svg.selectAll(".state")
+                .on("mouseover", function(event, d) {
+                    const val = stateMap.get(d.properties.name);
+                    tooltip.style("opacity", 1)
+                        .html(`<strong>${d.properties.name}</strong><br/>Weighted ${selectedEth.replace('pct_', '')}: ${val ? val.toFixed(2) : '0'}%`)
+                        .style("left", (event.pageX + 15) + "px")
+                        .style("top", (event.pageY - 20) + "px");
+                })
+                .on("mouseout", () => tooltip.style("opacity", 0));
+
+            drawLegend(colorScale, selectedEth);
+        }
+
+        function drawLegend(colorScale, eth) {
+            svg.selectAll(".legend-group").remove();
+            const legendG = svg.append("g").attr("class", "legend-group").attr("transform", `translate(50, 30)`);
+            const quantiles = colorScale.quantiles();
+            const fullRange = [d3.min(colorScale.domain()), ...quantiles, d3.max(colorScale.domain())];
+            
+            const legendWidth = 30;
+            
+            legendG.selectAll("rect")
+                .data(colorSchemes[eth])
+                .enter().append("rect")
+                .attr("x", (d, i) => i * (legendWidth + 2))
+                .attr("y", 15)
+                .attr("width", legendWidth)
+                .attr("height", 10)
+                .attr("fill", d => d);
+
+            legendG.append("text")
+                .attr("x", 0).attr("y", 5)
+                .style("font-size", "14px").style("font-weight", "bold").style("fill", "#333")
+                .text(`${eth.replace('pct_', '').toUpperCase()} Proportion (%)`);
+
+            legendG.selectAll(".legend-label")
+                .data([fullRange[0], fullRange[fullRange.length - 1]])
+                .enter().append("text")
+                .attr("class", "legend-label")
+                .attr("x", (d, i) => i * (colorSchemes[eth].length * (legendWidth + 2) - 35))
+                .attr("y", 40)
+                .style("font-size", "11px").style("fill", "#666")
+                .text(d => (d ? d.toFixed(1) : "0.0") + "%");
+        }
+
+        d3.select("#yearSlider").on("input", updateMap);
+        d3.select("#ethnicitySelect").on("change", updateMap);
+    </script>
+</body>
+</html>

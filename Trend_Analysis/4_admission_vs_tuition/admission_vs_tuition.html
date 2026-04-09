@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>IPEDS Animated Bubble Chart - Modern Layout</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 0; padding: 40px 0; background-color: #f4f7f6;
+            display: flex; flex-direction: column; align-items: center; 
+        }
+
+        h2 { color: #2c3e50; margin-bottom: 20px; font-size: 28px; }
+
+        .controls { 
+            width: 100%; max-width: 1100px; margin-bottom: 20px; padding: 25px; 
+            background: #ffffff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            display: flex; justify-content: center; align-items: center; gap: 15px; flex-wrap: wrap;
+        }
+        
+        #schoolInput { 
+            width: 400px; padding: 12px 18px; border-radius: 8px; 
+            border: 2px solid #ddd; font-size: 16px; outline: none;
+        }
+
+        button {
+            padding: 12px 20px; font-size: 16px; font-weight: 600; cursor: pointer;
+            border-radius: 8px; border: 2px solid #ddd; background: #fff; transition: 0.2s;
+        }
+        button:hover { background: #f8f9fa; border-color: #bbb; }
+        #playBtn { background-color: #4e79a7; color: white; border: none; }
+        #playBtn:hover { background-color: #3b5d81; }
+
+        #chart { 
+            background: #ffffff; border-radius: 12px; 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.05); 
+            padding: 30px; position: relative; 
+        }
+        
+        .bubble { stroke: #fff; stroke-width: 1px; opacity: 0.8; transition: opacity 0.2s; }
+        .bubble:hover { opacity: 0.4 !important; }
+
+        .axis-label { font-size: 14px; font-weight: bold; fill: #555; }
+        
+        .year-label {
+            font-size: 80px; font-weight: bold; fill: #f0f0f0;
+            position: absolute; 
+            right: 40px;
+            top: 40px;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .tooltip {
+            position: absolute; padding: 15px; background: rgba(255,255,255,0.98);
+            border-radius: 8px; pointer-events: none; opacity: 0;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.15); border: 1px solid #eee; font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>University Evolution: Admission vs. Tuition</h2>
+    
+    <div class="controls">
+        <label for="schoolInput">Institution:</label>
+        <input list="schoolList" id="schoolInput" placeholder="Search school name...">
+        <datalist id="schoolList"></datalist>
+        <button id="clearBtn">Clear</button>
+        <button id="playBtn">Play Animation ▶</button>
+    </div>
+
+    <div id="chart">
+        <div class="year-label" id="yearOverlay">2017</div>
+    </div>
+    <div id="tooltip" class="tooltip"></div>
+
+    <script>
+        const margin = {top: 50, right: 50, bottom: 80, left: 100},
+              width = 1100 - margin.left - margin.right,
+              height = 600 - margin.top - margin.bottom;
+
+        const svg = d3.select("#chart")
+            .append("svg")
+            .attr("width", width + margin.left + margin.right)
+            .attr("height", height + margin.top + margin.bottom)
+            .append("g")
+            .attr("transform", `translate(${margin.left},${margin.top})`);
+
+        let allData = [];
+        let years = [];
+        let currentYearIndex = 0;
+        let timer;
+        let isPlaying = false;
+        let selectedSchool = "";
+
+        d3.csv("ipeds_panel_2017_2023.csv").then(data => {
+            data.forEach(d => {
+                d.admission_rate = +d.admission_rate || 0;
+                d.tuition_fees_outstate = +d.tuition_fees_outstate || 0;
+                d.total_enrollment = +d.total_enrollment || 0;
+                d.year = +d.year;
+            });
+
+            allData = data.filter(d => d.admission_rate > 0 && d.tuition_fees_outstate > 0);
+            years = Array.from(new Set(allData.map(d => d.year))).sort();
+            const schools = Array.from(new Set(allData.map(d => d.institution_name))).sort();
+
+            const dl = d3.select("#schoolList");
+            schools.forEach(s => dl.append("option").attr("value", s));
+
+            setupScales();
+            renderYear(years[0]);
+
+            d3.select("#schoolInput").on("input", function() {
+                if (schools.includes(this.value)) {
+                    selectedSchool = this.value;
+                    renderYear(years[currentYearIndex]);
+                }
+            });
+
+            d3.select("#clearBtn").on("click", () => {
+                d3.select("#schoolInput").property("value", "");
+                selectedSchool = "";
+                renderYear(years[currentYearIndex]);
+                d3.select("#schoolInput").node().focus();
+            });
+
+            d3.select("#playBtn").on("click", togglePlay);
+        });
+
+        const x = d3.scaleLinear().domain([0, 105]).range([0, width]);
+        const y = d3.scaleLinear().range([height, 0]);
+        const radius = d3.scaleSqrt().range([2, 40]);
+        const color = d3.scaleOrdinal(d3.schemeTableau10);
+
+        function setupScales() {
+            y.domain([0, d3.max(allData, d => d.tuition_fees_outstate) * 1.05]);
+            radius.domain([0, d3.max(allData, d => d.total_enrollment)]);
+
+            svg.append("g")
+                .attr("transform", `translate(0,${height})`)
+                .call(d3.axisBottom(x).tickFormat(d => d + "%"));
+
+            svg.append("g").call(d3.axisLeft(y).tickFormat(d3.format("$,.0f")));
+
+            svg.append("text").attr("class", "axis-label").attr("x", width/2).attr("y", height + 50).style("text-anchor", "middle").text("Admission Rate (%)");
+            svg.append("text").attr("class", "axis-label").attr("transform", "rotate(-90)").attr("x", -height/2).attr("y", -75).style("text-anchor", "middle").text("Out-of-State Tuition ($)");
+        }
+
+        function renderYear(year) {
+            d3.select("#yearOverlay").text(year);
+            const yearData = allData.filter(d => d.year === year);
+            const tooltip = d3.select("#tooltip");
+
+            const bubbles = svg.selectAll(".bubble")
+                .data(yearData, d => d.unitid);
+
+            bubbles.exit().remove();
+
+            bubbles.enter()
+                .append("circle")
+                .attr("class", "bubble")
+                .merge(bubbles)
+                .sort((a, b) => b.total_enrollment - a.total_enrollment)
+                .transition().duration(isPlaying ? 1200 : 300).ease(d3.easeLinear)
+                .attr("cx", d => x(d.admission_rate))
+                .attr("cy", d => y(d.tuition_fees_outstate))
+                .attr("r", d => radius(d.total_enrollment))
+                .attr("fill", d => d.institution_name === selectedSchool ? "#e15759" : color(d.region_name))
+                .style("stroke", d => d.institution_name === selectedSchool ? "#000" : "#fff")
+                .style("stroke-width", d => d.institution_name === selectedSchool ? "3px" : "1px")
+                .style("opacity", d => {
+                    if (selectedSchool === "") return 0.7;
+                    return d.institution_name === selectedSchool ? 1 : 0.15;
+                });
+
+            svg.selectAll(".bubble")
+                .on("mouseover", (event, d) => {
+                    tooltip.style("opacity", 1)
+                        .html(`<strong>${d.institution_name}</strong> (${d.year})<br/>
+                               Enrollment: ${d3.format(",")(d.total_enrollment)}<br/>
+                               Tuition: $${d3.format(",")(d.tuition_fees_outstate)}<br/>
+                               Adm. Rate: ${d.admission_rate.toFixed(1)}%`)
+                        .style("left", (event.pageX + 15) + "px")
+                        .style("top", (event.pageY - 20) + "px");
+                })
+                .on("mouseout", () => tooltip.style("opacity", 0));
+        }
+
+        function togglePlay() {
+            isPlaying = !isPlaying;
+            d3.select("#playBtn").text(isPlaying ? "Pause Animation ⏸" : "Play Animation ▶");
+            
+            if (isPlaying) {
+                timer = setInterval(() => {
+                    currentYearIndex++;
+                    if (currentYearIndex >= years.length) currentYearIndex = 0;
+                    renderYear(years[currentYearIndex]);
+                }, 1400);
+            } else {
+                clearInterval(timer);
+            }
+        }
+    </script>
+</body>
+</html>

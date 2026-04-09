@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Demographic Trends - Searchable Dashboard</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 0; padding: 40px 0; background-color: #f4f7f6;
+            display: flex; flex-direction: column; align-items: center; 
+        }
+
+        h2 { color: #2c3e50; margin-bottom: 30px; font-size: 28px; }
+
+        .controls { 
+            width: 100%; max-width: 1100px; margin-bottom: 30px; padding: 25px; 
+            background: #ffffff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            display: flex; justify-content: center; align-items: center; gap: 15px;
+        }
+        
+        label { font-weight: 600; color: #34495e; }
+
+        #schoolInput { 
+            width: 500px; padding: 12px 18px; border-radius: 8px; 
+            border: 2px solid #ddd; font-size: 16px; outline: none; transition: all 0.3s;
+        }
+        #schoolInput:focus { border-color: #4e79a7; box-shadow: 0 0 8px rgba(78,121,167,0.2); }
+
+        #clearBtn {
+            padding: 12px 20px; font-size: 16px; font-weight: 600; color: #666;
+            background-color: #fff; border: 2px solid #ddd; border-radius: 8px; cursor: pointer;
+            transition: all 0.2s;
+        }
+        #clearBtn:hover { background-color: #f8f9fa; border-color: #bbb; color: #333; }
+
+        #chart { background: #ffffff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.05); padding: 30px; }
+        
+        .area { transition: opacity 0.2s; cursor: pointer; }
+        .area:hover { opacity: 0.6 !important; }
+
+        .axis-label { font-size: 14px; font-weight: bold; fill: #555; }
+        .tick text { font-size: 12px; fill: #7f8c8d; }
+
+        .tooltip {
+            position: absolute; padding: 15px; background: rgba(255,255,255,0.98);
+            border-radius: 8px; pointer-events: none; opacity: 0;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.15); border: 1px solid #eee; font-size: 14px;
+        }
+        .legend-item { font-size: 14px; font-weight: 600; }
+    </style>
+</head>
+<body>
+
+    <h2>Student Demographic Trends (2017-2023)</h2>
+    
+    <div class="controls">
+        <label for="schoolInput">Institution:</label>
+        <input list="schoolList" id="schoolInput" placeholder="Type to search e.g., University of Alabama">
+        <datalist id="schoolList"></datalist>
+        <button id="clearBtn">Clear</button>
+    </div>
+
+    <div id="chart"></div>
+    <div id="tooltip" class="tooltip"></div>
+
+    <script>
+        const margin = {top: 60, right: 150, bottom: 80, left: 100},
+              width = 1100 - margin.left - margin.right,
+              height = 600 - margin.top - margin.bottom;
+
+        const svg = d3.select("#chart")
+            .append("svg")
+            .attr("width", width + margin.left + margin.right)
+            .attr("height", height + margin.top + margin.bottom)
+            .append("g")
+            .attr("transform", `translate(${margin.left},${margin.top})`);
+
+        const keys = ["pct_white", "pct_black", "pct_hispanic", "pct_asian", "pct_others"];
+        const colorScale = d3.scaleOrdinal()
+            .domain(keys)
+            .range(["#4e79a7", "#f28e2c", "#e15759", "#76b7b2", "#59a14f"]);
+
+        const labelMap = {
+            "pct_white": "White", "pct_black": "Black", "pct_hispanic": "Hispanic",
+            "pct_asian": "Asian", "pct_others": "Others"
+        };
+
+        let allData = [];
+
+        d3.csv("ipeds_panel_2017_2023.csv").then(data => {
+            data.forEach(d => {
+                d.pct_white = +d.pct_white || 0;
+                d.pct_black = +d.pct_black || 0;
+                d.pct_hispanic = +d.pct_hispanic || 0;
+                d.pct_asian = +d.pct_asian || 0;
+                d.pct_others = (+d.pct_american_indian || 0) + (+d.pct_pacific_islander || 0) + 
+                               (+d.pct_two_or_more || 0) + (+d.pct_race_unknown || 0) + 
+                               (+d.pct_nonresident_alien || 0);
+            });
+            allData = data;
+
+            const schools = Array.from(new Set(data.map(d => d.institution_name))).filter(d => d).sort();
+            
+            const dl = d3.select("#schoolList");
+            schools.forEach(s => dl.append("option").attr("value", s));
+
+            const inputField = d3.select("#schoolInput");
+            
+            inputField.on("input", function() {
+                if (schools.includes(this.value)) {
+                    updateChart(this.value);
+                }
+            });
+
+            d3.select("#clearBtn").on("click", () => {
+                inputField.property("value", "");
+                inputField.node().focus();
+            });
+
+            updateChart(schools[0]);
+            inputField.property("value", schools[0]);
+        });
+
+        function updateChart(schoolName) {
+            const schoolData = allData.filter(d => d.institution_name === schoolName)
+                                     .sort((a,b) => a.year - b.year);
+
+            if (schoolData.length === 0) return;
+            svg.selectAll("*").remove();
+
+            const stack = d3.stack().keys(keys);
+            const stackedData = stack(schoolData);
+
+            const x = d3.scalePoint().domain(schoolData.map(d => d.year)).range([0, width]);
+            const y = d3.scaleLinear().domain([0, 100]).range([height, 0]);
+
+            svg.append("g").attr("transform", `translate(0,${height})`).call(d3.axisBottom(x));
+            svg.append("g").call(d3.axisLeft(y).tickFormat(d => d + "%"));
+
+            svg.append("text").attr("class", "axis-label").attr("x", width/2).attr("y", height + 50).style("text-anchor", "middle").text("Academic Year");
+            svg.append("text").attr("class", "axis-label").attr("transform", "rotate(-90)").attr("x", -height/2).attr("y", -60).style("text-anchor", "middle").text("Composition Percentage");
+
+            const area = d3.area().x(d => x(d.data.year)).y0(d => y(d[0])).y1(d => y(d[1])).curve(d3.curveMonotoneX);
+
+            const tooltip = d3.select("#tooltip");
+            
+            svg.selectAll(".layers")
+                .data(stackedData).enter().append("path")
+                .attr("class", "area")
+                .style("fill", d => colorScale(d.key))
+                .attr("d", area)
+                .on("mouseover", function(event, d) {
+                    tooltip.style("opacity", 1).html(`<strong>Ethnicity: ${labelMap[d.key]}</strong>`);
+                })
+                .on("mousemove", (event) => {
+                    tooltip.style("left", (event.pageX + 15) + "px").style("top", (event.pageY - 20) + "px");
+                })
+                .on("mouseleave", function() {
+                    tooltip.style("opacity", 0);
+                });
+
+            const legend = svg.selectAll(".legend")
+                .data(keys.slice().reverse()).enter().append("g")
+                .attr("transform", (d, i) => `translate(${width + 20}, ${i * 25})`);
+
+            legend.append("rect").attr("width", 18).attr("height", 18).style("fill", colorScale);
+            legend.append("text").attr("x", 25).attr("y", 9).attr("dy", ".35em").attr("class", "legend-item").text(d => labelMap[d]);
+        }
+    </script>
+</body>
+</html>

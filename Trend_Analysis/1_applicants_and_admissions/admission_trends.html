@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>IPEDS Admission Trends Dashboard</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            margin: 0; 
+            padding: 40px 0;
+            background-color: #f4f7f6;
+            display: flex;
+            flex-direction: column;
+            align-items: center; 
+        }
+
+        h2 { 
+            color: #2c3e50; 
+            margin-bottom: 30px; 
+            font-size: 28px;
+        }
+
+        .controls { 
+            width: 100%;
+            max-width: 1100px; 
+            margin-bottom: 30px; 
+            padding: 25px; 
+            background: #ffffff; 
+            border-radius: 12px; 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 15px;
+        }
+        
+        label { font-weight: 600; color: #34495e; }
+
+        #schoolInput { 
+            width: 500px; 
+            padding: 12px 18px; 
+            border-radius: 8px; 
+            border: 2px solid #ddd; 
+            font-size: 16px;
+            outline: none;
+            transition: all 0.3s;
+        }
+        #schoolInput:focus { 
+            border-color: #4e79a7; 
+            box-shadow: 0 0 8px rgba(78,121,167,0.2);
+        }
+
+        #clearBtn {
+            padding: 12px 20px;
+            font-size: 16px;
+            font-weight: 600;
+            color: #666;
+            background-color: #fff;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        #clearBtn:hover {
+            background-color: #f8f9fa;
+            border-color: #bbb;
+            color: #333;
+        }
+
+        .bar-applicants, .bar-admissions { transition: opacity 0.2s; cursor: pointer; }
+        .bar-applicants:hover, .bar-admissions:hover { opacity: 0.4 !important; }
+        .bar-applicants { fill: #4e79a7; }
+        .bar-admissions { fill: #f28e2c; }
+        .line-rate { fill: none; stroke: #e15759; stroke-width: 4px; }
+        
+        #chart { 
+            background: #ffffff; 
+            border-radius: 12px; 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.05); 
+            padding: 30px;
+        }
+
+        .axis-label { font-size: 14px; font-weight: bold; fill: #555; }
+        .tick text { font-size: 12px; fill: #7f8c8d; }
+
+        .tooltip {
+            position: absolute; padding: 15px; background: rgba(255,255,255,0.98);
+            border-radius: 8px; pointer-events: none; opacity: 0;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.15); border: 1px solid #eee;
+            font-size: 14px; line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>US College Admission Trends Analysis (2017-2023)</h2>
+    
+    <div class="controls">
+        <label for="schoolInput">Institution:</label>
+        <input list="schoolList" id="schoolInput" placeholder="Type to search e.g., Harvard University">
+        <datalist id="schoolList"></datalist>
+        <button id="clearBtn">Clear</button>
+    </div>
+
+    <div id="chart"></div>
+    <div id="tooltip" class="tooltip"></div>
+
+    <script>
+        const margin = {top: 60, right: 100, bottom: 80, left: 100},
+              width = 1100 - margin.left - margin.right,
+              height = 600 - margin.top - margin.bottom;
+
+        const svg = d3.select("#chart")
+            .append("svg")
+            .attr("width", width + margin.left + margin.right)
+            .attr("height", height + margin.top + margin.bottom)
+            .append("g")
+            .attr("transform", `translate(${margin.left},${margin.top})`);
+
+        let allData = [];
+
+        d3.csv("ipeds_panel_2017_2023.csv").then(data => {
+            data.forEach(d => {
+                d.applicants_total = +d.applicants_total || 0;
+                d.admissions_total = +d.admissions_total || 0;
+                d.admission_rate = +d.admission_rate || 0;
+            });
+            allData = data;
+
+            const schools = Array.from(new Set(data.map(d => d.institution_name)))
+                                 .filter(d => d !== "")
+                                 .sort();
+            
+            const dataList = d3.select("#schoolList");
+            schools.forEach(school => {
+                dataList.append("option").attr("value", school);
+            });
+
+            const inputField = d3.select("#schoolInput");
+            
+            inputField.on("input", function() {
+                if (schools.includes(this.value)) {
+                    updateChart(this.value);
+                }
+            });
+
+            d3.select("#clearBtn").on("click", () => {
+                inputField.property("value", "");
+                inputField.node().focus();
+            });
+
+            const initialSchool = schools[0];
+            inputField.property("value", initialSchool);
+            updateChart(initialSchool);
+        });
+
+        function updateChart(schoolName) {
+            const schoolData = allData.filter(d => d.institution_name === schoolName)
+                                     .sort((a,b) => a.year - b.year);
+
+            if (schoolData.length === 0) return;
+
+            svg.selectAll("*").remove();
+
+            const x0 = d3.scaleBand().domain(schoolData.map(d => d.year)).range([0, width]).padding(0.25);
+            const x1 = d3.scaleBand().domain(['app', 'adm']).range([0, x0.bandwidth()]).padding(0.05);
+            
+            const maxVal = d3.max(schoolData, d => Math.max(d.applicants_total, d.admissions_total)) || 100;
+            const yLeft = d3.scaleLinear().domain([0, maxVal * 1.1]).range([height, 0]);
+            const yRight = d3.scaleLinear().domain([0, 100]).range([height, 0]);
+
+            svg.append("g").attr("transform", `translate(0,${height})`).call(d3.axisBottom(x0));
+            svg.append("g").call(d3.axisLeft(yLeft).tickFormat(d3.format(".2s")));
+            svg.append("g").attr("transform", `translate(${width}, 0)`).call(d3.axisRight(yRight).tickFormat(d => d + "%"));
+
+            svg.append("text").attr("class", "axis-label").attr("x", -height/2).attr("y", -70).attr("transform", "rotate(-90)").style("text-anchor", "middle").text("Number of Students");
+            svg.append("text").attr("class", "axis-label").attr("x", width + 70).attr("y", -height/2).attr("transform", `rotate(90, ${width + 70}, ${-height/2})`).style("text-anchor", "middle").text("Admission Rate (%)");
+            svg.append("text").attr("class", "axis-label").attr("x", width/2).attr("y", height + 50).style("text-anchor", "middle").text("Academic Year");
+
+            const groups = svg.selectAll(".year-g")
+                .data(schoolData).enter().append("g")
+                .attr("transform", d => `translate(${x0(d.year)}, 0)`);
+
+            groups.append("rect")
+                .attr("class", "bar-applicants")
+                .attr("x", x1('app'))
+                .attr("y", d => yLeft(d.applicants_total))
+                .attr("width", x1.bandwidth())
+                .attr("height", d => height - yLeft(d.applicants_total));
+
+            groups.append("rect")
+                .attr("class", "bar-admissions")
+                .attr("x", x1('adm'))
+                .attr("y", d => yLeft(d.admissions_total))
+                .attr("width", x1.bandwidth())
+                .attr("height", d => height - yLeft(d.admissions_total));
+
+            const line = d3.line().x(d => x0(d.year) + x0.bandwidth()/2).y(d => yRight(d.admission_rate)).curve(d3.curveMonotoneX);
+            svg.append("path").datum(schoolData).attr("class", "line-rate").attr("d", line);
+
+            const tooltip = d3.select("#tooltip");
+            svg.selectAll(".dot")
+                .data(schoolData).enter().append("circle")
+                .attr("cx", d => x0(d.year) + x0.bandwidth()/2)
+                .attr("cy", d => yRight(d.admission_rate))
+                .attr("r", 6).attr("fill", "#e15759")
+                .on("mouseover", (event, d) => {
+                    tooltip.style("opacity", 1)
+                        .html(`<strong>Year: ${d.year}</strong><br/>
+                               <span style="color:#4e79a7">■</span> Applicants: ${d3.format(",")(d.applicants_total)}<br/>
+                               <span style="color:#f28e2c">■</span> Admissions: ${d3.format(",")(d.admissions_total)}<br/>
+                               <span style="color:#e15759">●</span> Rate: ${d.admission_rate.toFixed(1)}%`)
+                        .style("left", (event.pageX + 15) + "px")
+                        .style("top", (event.pageY - 20) + "px");
+                })
+                .on("mouseout", () => tooltip.style("opacity", 0));
+        }
+    </script>
+</body>
+</html>

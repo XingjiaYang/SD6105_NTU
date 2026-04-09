@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>University Strength Radar Chart - Landscape Layout</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { 
+            font-family: 'Segoe UI', sans-serif; 
+            margin: 0; padding: 40px 0; background-color: #f4f7f6;
+            display: flex; flex-direction: column; align-items: center; 
+        }
+        h2 { color: #2c3e50; margin-bottom: 20px; font-size: 28px; }
+        .controls { 
+            width: 100%; max-width: 1100px; margin-bottom: 20px; padding: 25px; 
+            background: #ffffff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            display: flex; justify-content: center; align-items: center; gap: 20px;
+        }
+        #uniInput { 
+            width: 350px; padding: 12px; border-radius: 8px; border: 2px solid #ddd; 
+            font-size: 16px; outline: none; transition: border-color 0.3s;
+        }
+        #uniInput:focus { border-color: #3498db; }
+        input[type=range] { width: 300px; cursor: pointer; }
+        
+        /* 核心改进: 横向拉宽白底框 */
+        #chart { 
+            background: #ffffff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.05); 
+            padding: 60px 120px; /* Top/Bottom 60px, Left/Right 120px */
+            position: relative; 
+            width: 1100px; /* Fixed wide width */
+            display: flex;
+            justify-content: center;
+        }
+
+        .year-label { 
+            font-size: 100px; font-weight: bold; position: absolute; 
+            right: 60px; top: 10px; pointer-events: none; 
+            color: #000; opacity: 0.12; 
+        }
+        .radar-area { fill: #3498db; fill-opacity: 0.3; stroke: #2980b9; stroke-width: 3px; transition: all 0.5s; }
+        .axis-label { font-size: 14px; font-weight: bold; fill: #555; }
+        .grid-label { font-size: 11px; fill: #999; text-anchor: middle; }
+        
+        .tooltip {
+            position: absolute; padding: 10px; background: rgba(0,0,0,0.85);
+            color: #fff; border-radius: 5px; pointer-events: none; opacity: 0;
+            font-size: 13px; z-index: 10;
+            transform: translate(-50%, -120%);
+            white-space: nowrap;
+        }
+        .radar-node { fill: #2980b9; stroke: #fff; stroke-width: 2px; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <h2>University Strength Profile Analysis</h2>
+    
+    <div class="controls">
+        <label><strong>Search/Select University:</strong></label>
+        <input list="uniList" id="uniInput" placeholder="Type or select a school...">
+        <datalist id="uniList"></datalist>
+
+        <label><strong>Year:</strong></label>
+        <input type="range" id="yearSlider" min="2017" max="2023" step="1" value="2017">
+        <span id="yearValDisplay">2017</span>
+    </div>
+
+    <div id="chart">
+        <div class="year-label" id="yearOverlay">2017</div>
+        <div id="tooltip" class="tooltip"></div>
+    </div>
+
+    <script>
+        const width = 800, height = 750, radius = 280;
+        const svg = d3.select("#chart").append("svg").attr("width", width).attr("height", height);
+        const g = svg.append("g").attr("transform", `translate(${width/2}, ${height/2})`);
+        const tooltip = d3.select("#tooltip");
+
+        const features = ["Admission Selectivity", "Test Submission", "Tuition Level", "Scale", "Diversity"];
+        const angleSlice = (Math.PI * 2) / features.length;
+        const rScale = d3.scaleLinear().domain([0, 100]).range([0, radius]);
+
+        const gridLevels = [25, 50, 75, 100];
+        gridLevels.forEach(level => {
+            g.append("circle").attr("r", rScale(level)).attr("fill", "none").attr("stroke", "#eee").attr("stroke-dasharray", "4,4");
+            g.append("text").attr("class", "grid-label").attr("y", -rScale(level) - 5).text(level + "%");
+        });
+
+        const axes = g.selectAll(".axis").data(features).enter().append("g").attr("class", "axis");
+        axes.append("line").attr("x1", 0).attr("y1", 0)
+            .attr("x2", (d, i) => rScale(100) * Math.cos(angleSlice * i - Math.PI/2))
+            .attr("y2", (d, i) => rScale(100) * Math.sin(angleSlice * i - Math.PI/2))
+            .attr("stroke", "#f0f0f0").attr("stroke-width", "2px");
+
+        axes.append("text").attr("class", "axis-label")
+            .attr("x", (d, i) => rScale(125) * Math.cos(angleSlice * i - Math.PI/2))
+            .attr("y", (d, i) => rScale(125) * Math.sin(angleSlice * i - Math.PI/2))
+            .attr("text-anchor", "middle").attr("dy", "0.35em").text(d => d);
+
+        let rawData = [];
+        let uniNames = [];
+
+        d3.csv("ipeds_panel_2017_2023.csv").then(data => {
+            data.forEach(d => {
+                d.year = +d.year;
+                d.admission_rate = +d.admission_rate || 0;
+                d.pct_submit = (+d.pct_submit_sat || 0) + (+d.pct_submit_act || 0);
+                d.tuition = +d.tuition_fees_outstate || 0;
+                d.enrollment = +d.total_enrollment || 0;
+                d.diversity = (+d.pct_nonresident_alien || 0) + (+d.pct_hispanic || 0) + (+d.pct_black || 0) + (+d.pct_asian || 0);
+            });
+            rawData = data;
+            uniNames = [...new Set(data.map(d => d.institution_name))].filter(n => n).sort();
+            
+            const dl = d3.select("#uniList");
+            uniNames.forEach(u => dl.append("option").attr("value", u));
+
+            const defaultUni = "Harvard University"; 
+            d3.select("#uniInput").property("value", uniNames.includes(defaultUni) ? defaultUni : uniNames[0]);
+            
+            updateRadar();
+        });
+
+        function updateRadar() {
+            const selectedUni = d3.select("#uniInput").property("value");
+            const selectedYear = +d3.select("#yearSlider").property("value");
+
+            if (!uniNames.includes(selectedUni)) return;
+
+            d3.select("#yearValDisplay").text(selectedYear);
+            d3.select("#yearOverlay").text(selectedYear);
+
+            const d = rawData.find(item => item.institution_name === selectedUni && item.year === selectedYear);
+            if (!d) return;
+
+            const values = [
+                Math.max(0, 100 - d.admission_rate),
+                Math.min(100, d.pct_submit),
+                Math.min(100, (d.tuition / 65000) * 100),
+                Math.min(100, (d.enrollment / 60000) * 100),
+                Math.min(100, d.diversity)
+            ];
+
+            const radarData = features.map((f, i) => ({ axis: f, value: values[i] }));
+            const line = d3.lineRadial().radius(d => rScale(d.value)).angle((d, i) => i * angleSlice).curve(d3.curveLinearClosed);
+
+            let area = g.selectAll(".radar-area").data([radarData]);
+            area.enter().append("path").attr("class", "radar-area").merge(area).transition().duration(800).attr("d", line);
+
+            let nodes = g.selectAll(".radar-node").data(radarData);
+            nodes.enter().append("circle").attr("class", "radar-node").attr("r", 6)
+                .merge(nodes)
+                .on("mouseover", (event, d) => {
+                    tooltip.style("opacity", 1).html(`<strong>${d.axis}</strong>: ${d.value.toFixed(1)}%`);
+                    d3.select(event.currentTarget).attr("r", 9).style("fill", "#e67e22");
+                })
+                .on("mousemove", (event) => {
+                    const [mouseX, mouseY] = d3.pointer(event, d3.select("#chart").node());
+                    tooltip.style("left", mouseX + "px").style("top", (mouseY - 5) + "px");
+                })
+                .on("mouseout", (event) => {
+                    tooltip.style("opacity", 0);
+                    d3.select(event.currentTarget).attr("r", 6).style("fill", "#2980b9");
+                })
+                .transition().duration(800)
+                .attr("cx", (d, i) => rScale(d.value) * Math.cos(i * angleSlice - Math.PI / 2))
+                .attr("cy", (d, i) => rScale(d.value) * Math.sin(i * angleSlice - Math.PI / 2));
+            nodes.exit().remove();
+        }
+
+        d3.select("#uniInput").on("input", updateRadar);
+        d3.select("#yearSlider").on("input", updateRadar);
+    </script>
+</body>
+</html>

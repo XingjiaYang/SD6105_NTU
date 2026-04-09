@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Admission & Testing Trends Dashboard</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { 
+            font-family: 'Segoe UI', sans-serif; 
+            margin: 0; padding: 40px 0; background-color: #f4f7f6;
+            display: flex; flex-direction: column; align-items: center; 
+        }
+        h2 { color: #2c3e50; margin-bottom: 30px; font-size: 28px; }
+
+        .controls { 
+            width: 100%; max-width: 1100px; margin-bottom: 30px; padding: 25px; 
+            background: #ffffff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            display: flex; justify-content: center; align-items: center; gap: 15px;
+        }
+        label { font-weight: 600; color: #34495e; }
+        #schoolInput { 
+            width: 500px; padding: 12px 18px; border-radius: 8px; 
+            border: 2px solid #ddd; font-size: 16px; outline: none; transition: all 0.3s;
+        }
+        #schoolInput:focus { border-color: #4e79a7; box-shadow: 0 0 8px rgba(78,121,167,0.2); }
+        #clearBtn {
+            padding: 12px 20px; font-size: 16px; font-weight: 600; color: #666;
+            background-color: #fff; border: 2px solid #ddd; border-radius: 8px; cursor: pointer;
+        }
+        #clearBtn:hover { background-color: #f8f9fa; border-color: #bbb; }
+
+        #chart { background: #ffffff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.05); padding: 30px; }
+        .line { fill: none; stroke-width: 4px; transition: stroke-width 0.2s; }
+        .dot { cursor: pointer; transition: r 0.2s; }
+        .dot:hover { r: 8; }
+
+        .axis-label { font-size: 14px; font-weight: bold; fill: #555; }
+        .tooltip {
+            position: absolute; padding: 15px; background: rgba(255,255,255,0.98);
+            border-radius: 8px; pointer-events: none; opacity: 0;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.15); border: 1px solid #eee; font-size: 14px; line-height: 1.6;
+        }
+        .legend-item { font-size: 14px; font-weight: 600; cursor: default; }
+    </style>
+</head>
+<body>
+
+    <h2>SAT/ACT Submission & Admission Rate Trends (2017-2023)</h2>
+    
+    <div class="controls">
+        <label for="schoolInput">Institution:</label>
+        <input list="schoolList" id="schoolInput" placeholder="Type to search e.g., Harvard University">
+        <datalist id="schoolList"></datalist>
+        <button id="clearBtn">Clear</button>
+    </div>
+
+    <div id="chart"></div>
+    <div id="tooltip" class="tooltip"></div>
+
+    <script>
+        const margin = {top: 60, right: 180, bottom: 80, left: 100},
+              width = 1100 - margin.left - margin.right,
+              height = 600 - margin.top - margin.bottom;
+
+        const svg = d3.select("#chart")
+            .append("svg")
+            .attr("width", width + margin.left + margin.right)
+            .attr("height", height + margin.top + margin.bottom)
+            .append("g")
+            .attr("transform", `translate(${margin.left},${margin.top})`);
+
+        const metrics = [
+            { id: "pct_submit_sat", label: "SAT Submission %", color: "#4e79a7" },
+            { id: "pct_submit_act", label: "ACT Submission %", color: "#f28e2c" },
+            { id: "admission_rate", label: "Admission Rate %", color: "#e15759" }
+        ];
+
+        let allData = [];
+
+        d3.csv("ipeds_panel_2017_2023.csv").then(data => {
+            data.forEach(d => {
+                d.pct_submit_sat = +d.pct_submit_sat || 0;
+                d.pct_submit_act = +d.pct_submit_act || 0;
+                d.admission_rate = +d.admission_rate || 0;
+            });
+            allData = data;
+
+            const schools = Array.from(new Set(data.map(d => d.institution_name))).filter(d => d).sort();
+            const dl = d3.select("#schoolList");
+            schools.forEach(s => dl.append("option").attr("value", s));
+
+            const inputField = d3.select("#schoolInput");
+            inputField.on("input", function() {
+                if (schools.includes(this.value)) updateChart(this.value);
+            });
+
+            d3.select("#clearBtn").on("click", () => {
+                inputField.property("value", "");
+                inputField.node().focus();
+            });
+
+            updateChart(schools[0]);
+            inputField.property("value", schools[0]);
+        });
+
+        function updateChart(schoolName) {
+            const schoolData = allData.filter(d => d.institution_name === schoolName)
+                                     .sort((a,b) => a.year - b.year);
+
+            if (schoolData.length === 0) return;
+            svg.selectAll("*").remove();
+
+            const x = d3.scalePoint().domain(schoolData.map(d => d.year)).range([0, width]);
+            const y = d3.scaleLinear().domain([0, 100]).range([height, 0]);
+
+            svg.append("g").attr("transform", `translate(0,${height})`).call(d3.axisBottom(x));
+            svg.append("g").call(d3.axisLeft(y).tickFormat(d => d + "%"));
+
+            svg.append("text").attr("class", "axis-label").attr("x", width/2).attr("y", height + 50).style("text-anchor", "middle").text("Academic Year");
+            svg.append("text").attr("class", "axis-label").attr("transform", "rotate(-90)").attr("x", -height/2).attr("y", -60).style("text-anchor", "middle").text("Percentage (%)");
+
+            const tooltip = d3.select("#tooltip");
+
+            metrics.forEach(m => {
+                const line = d3.line()
+                    .x(d => x(d.year))
+                    .y(d => y(d[m.id]))
+                    .curve(d3.curveMonotoneX);
+
+                svg.append("path")
+                    .datum(schoolData)
+                    .attr("class", "line")
+                    .attr("d", line)
+                    .style("stroke", m.color);
+
+                svg.selectAll(`.dot-${m.id}`)
+                    .data(schoolData).enter().append("circle")
+                    .attr("class", "dot")
+                    .attr("cx", d => x(d.year))
+                    .attr("cy", d => y(d[m.id]))
+                    .attr("r", 5)
+                    .attr("fill", m.color)
+                    .on("mouseover", (event, d) => {
+                        tooltip.style("opacity", 1)
+                            .html(`<strong>${d.year} Analysis</strong><br/>
+                                   <span style="color:${m.color}">●</span> ${m.label}: ${d[m.id].toFixed(1)}%`)
+                            .style("left", (event.pageX + 15) + "px")
+                            .style("top", (event.pageY - 20) + "px");
+                    })
+                    .on("mouseout", () => tooltip.style("opacity", 0));
+            });
+
+            const legend = svg.selectAll(".legend")
+                .data(metrics).enter().append("g")
+                .attr("transform", (d, i) => `translate(${width + 30}, ${i * 30})`);
+
+            legend.append("line")
+                .attr("x1", 0).attr("x2", 25).attr("y1", 10).attr("y2", 10)
+                .style("stroke", d => d.color).style("stroke-width", 4);
+
+            legend.append("text")
+                .attr("x", 35).attr("y", 10).attr("dy", ".35em").attr("class", "legend-item")
+                .text(d => d.label);
+        }
+    </script>
+</body>
+</html>
