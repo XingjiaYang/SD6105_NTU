@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Interactive t-SNE Explorer</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      background: #f7f7f7;
+      color: #222;
+    }
+    .container {
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+    .sidebar {
+      width: 320px;
+      background: #fff;
+      border-right: 1px solid #ddd;
+      padding: 16px;
+      box-sizing: border-box;
+      overflow-y: auto;
+    }
+    .main {
+      flex: 1;
+      position: relative;
+      background: #fafafa;
+    }
+    h1 {
+      font-size: 22px;
+      margin: 0 0 12px 0;
+    }
+    .desc {
+      font-size: 13px;
+      color: #555;
+      line-height: 1.5;
+      margin-bottom: 16px;
+    }
+    .control-group {
+      margin-bottom: 14px;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: bold;
+      margin-bottom: 6px;
+    }
+    select, input, button {
+      width: 100%;
+      padding: 8px;
+      box-sizing: border-box;
+      font-size: 14px;
+    }
+    button {
+      cursor: pointer;
+      border: none;
+      background: #2563eb;
+      color: white;
+      border-radius: 6px;
+      margin-top: 6px;
+    }
+    button:hover {
+      background: #1d4ed8;
+    }
+    .small {
+      font-size: 12px;
+      color: #666;
+      margin-top: 4px;
+    }
+    .status {
+      font-size: 13px;
+      margin-top: 10px;
+      color: #333;
+      white-space: pre-line;
+    }
+    #chart {
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: white;
+    }
+    .tooltip {
+      position: absolute;
+      visibility: hidden;
+      background: rgba(0,0,0,0.85);
+      color: white;
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      max-width: 280px;
+      line-height: 1.4;
+      pointer-events: none;
+      z-index: 10;
+    }
+    .loading {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      background: rgba(255,255,255,0.95);
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 13px;
+      display: none;
+      z-index: 20;
+    }
+    .footer-note {
+      font-size: 12px;
+      color: #777;
+      margin-top: 14px;
+      line-height: 1.5;
+    }
+    .mono {
+      font-family: Consolas, Menlo, monospace;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="sidebar">
+    <h1>Interactive t-SNE Explorer</h1>
+    <div class="desc">
+      Explore how t-SNE changes under different distance definitions, perplexity, random seed, and gamma.
+    </div>
+
+    <div class="control-group">
+      <label for="fileInput">Optional: Upload CSV</label>
+      <input id="fileInput" type="file" accept=".csv" />
+      <div class="small">If not uploaded, the page will try to load <span class="mono">./data_clean/IPEDS_data_cleaned.csv</span>.</div>
+    </div>
+
+    <div class="control-group">
+      <label for="distanceType">Distance Type</label>
+      <select id="distanceType">
+        <option value="gower">Gower</option>
+        <option value="mixed">Squared Euclidean + Weighted Hamming</option>
+      </select>
+    </div>
+
+    <div class="control-group">
+      <label for="perplexity">Perplexity</label>
+      <input id="perplexity" type="number" min="2" max="100" step="1" value="30" />
+    </div>
+
+    <div class="control-group">
+      <label for="randomSeed">Random Seed</label>
+      <input id="randomSeed" type="number" step="1" value="200" />
+    </div>
+
+    <div class="control-group" id="gammaGroup" style="display:none;">
+      <label for="gamma">Gamma</label>
+      <input id="gamma" type="number" step="0.1" value="1" />
+      <div class="small">Only used for Squared Euclidean + Weighted Hamming.</div>
+    </div>
+
+    <div class="control-group">
+      <label for="displayLabelCol">Tooltip Label Column</label>
+      <select id="displayLabelCol"></select>
+    </div>
+
+    <div class="control-group">
+      <button id="runBtn">Run t-SNE</button>
+    </div>
+
+    <div class="status" id="statusBox">Status: waiting for data.</div>
+
+    <div class="footer-note">
+      Notes:
+      <br>• This page computes distances in the browser.
+      <br>• Large datasets may be slow.
+      <br>• The browser result will not exactly match scikit-learn.
+      <br>• Seed here controls browser-side initialization.
+    </div>
+  </div>
+
+  <div class="main">
+    <svg id="chart"></svg>
+    <div class="tooltip" id="tooltip"></div>
+    <div class="loading" id="loadingBox">Computing...</div>
+  </div>
+</div>
+
+<script>
+/* =========================
+   Seeded random utilities
+========================= */
+function mulberry32(seed) {
+  let t = seed >>> 0;
+  return function() {
+    t += 0x6D2B79F5;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/* =========================
+   CSV parsing helpers
+========================= */
+function autoTypeRow(row) {
+  const out = {};
+  for (const [k, v] of Object.entries(row)) {
+    if (v == null || v === "") {
+      out[k] = null;
+      continue;
+    }
+    const trimmed = String(v).trim();
+    const num = +trimmed;
+    if (trimmed !== "" && Number.isFinite(num) && /^-?\d+(\.\d+)?$/.test(trimmed)) {
+      out[k] = num;
+    } else {
+      out[k] = trimmed;
+    }
+  }
+  return out;
+}
+
+/* =========================
+   Data helpers
+========================= */
+function getColumns(data) {
+  if (!data.length) return [];
+  return Object.keys(data[0]);
+}
+
+function inferColumnTypes(data) {
+  const cols = getColumns(data);
+  const numericCols = [];
+  const categoricalCols = [];
+
+  for (const col of cols) {
+    let numericCount = 0;
+    let nonNullCount = 0;
+    for (const row of data) {
+      const v = row[col];
+      if (v !== null && v !== undefined && v !== "") {
+        nonNullCount++;
+        if (typeof v === "number" && Number.isFinite(v)) numericCount++;
+      }
+    }
+    if (nonNullCount > 0 && numericCount / nonNullCount > 0.9) {
+      numericCols.push(col);
+    } else {
+      categoricalCols.push(col);
+    }
+  }
+
+  return { numericCols, categoricalCols };
+}
+
+function minMaxNumeric(data, numericCols) {
+  const stats = {};
+  for (const col of numericCols) {
+    let min = Infinity;
+    let max = -Infinity;
+    for (const row of data) {
+      const v = row[col];
+      if (typeof v === "number" && Number.isFinite(v)) {
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+    }
+    if (!Number.isFinite(min)) min = 0;
+    if (!Number.isFinite(max)) max = 0;
+    stats[col] = { min, max, range: max - min };
+  }
+  return stats;
+}
+
+function encodeCategorical(data, categoricalCols) {
+  const encoders = {};
+  const encodedRows = data.map(() => ({}));
+
+  for (const col of categoricalCols) {
+    const levels = [];
+    const seen = new Map();
+    for (const row of data) {
+      const v = row[col];
+      if (v !== null && v !== undefined && v !== "") {
+        if (!seen.has(v)) {
+          seen.set(v, levels.length);
+          levels.push(v);
+        }
+      }
+    }
+    encoders[col] = seen;
+    data.forEach((row, i) => {
+      const v = row[col];
+      encodedRows[i][col] = (v !== null && v !== undefined && v !== "" && seen.has(v)) ? seen.get(v) : null;
+    });
+  }
+
+  return { encoders, encodedRows };
+}
+
+/* =========================
+   Distance functions
+========================= */
+function gowerDistance(rowA, rowB, numericCols, categoricalCols, numericStats) {
+  let sum = 0;
+  let count = 0;
+
+  for (const col of numericCols) {
+    const a = rowA[col], b = rowB[col];
+    if (typeof a === "number" && Number.isFinite(a) && typeof b === "number" && Number.isFinite(b)) {
+      const range = numericStats[col].range;
+      const d = range === 0 ? 0 : Math.abs(a - b) / range;
+      sum += d;
+      count++;
+    }
+  }
+
+  for (const col of categoricalCols) {
+    const a = rowA[col], b = rowB[col];
+    if (a !== null && a !== undefined && a !== "" && b !== null && b !== undefined && b !== "") {
+      sum += (a === b ? 0 : 1);
+      count++;
+    }
+  }
+
+  return count === 0 ? 0 : sum / count;
+}
+
+function squaredEuclideanDistance(rowA, rowB, numericCols) {
+  let sum = 0;
+  let used = 0;
+  for (const col of numericCols) {
+    const a = rowA[col], b = rowB[col];
+    if (typeof a === "number" && Number.isFinite(a) && typeof b === "number" && Number.isFinite(b)) {
+      sum += (a - b) * (a - b);
+      used++;
+    }
+  }
+  return used === 0 ? 0 : sum;
+}
+
+function weightedHammingCount(rowA, rowB, categoricalCols) {
+  let sum = 0;
+  for (const col of categoricalCols) {
+    const a = rowA[col], b = rowB[col];
+    if (a !== null && a !== undefined && a !== "" && b !== null && b !== undefined && b !== "") {
+      if (a !== b) sum += 1;
+    }
+  }
+  return sum;
+}
+
+function buildDistanceMatrix(data, distanceType, gamma, numericCols, categoricalCols, numericStats) {
+  const n = data.length;
+  const D = Array.from({ length: n }, () => new Array(n).fill(0));
+
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      let d = 0;
+      if (distanceType === "gower") {
+        d = gowerDistance(data[i], data[j], numericCols, categoricalCols, numericStats);
+      } else {
+        const de = squaredEuclideanDistance(data[i], data[j], numericCols);
+        const dh = weightedHammingCount(data[i], data[j], categoricalCols);
+        d = de + gamma * dh;
+      }
+      D[i][j] = d;
+      D[j][i] = d;
+    }
+  }
+  return D;
+}
+
+/* =========================
+   Tiny t-SNE-like embedding
+   Note: this is a lightweight approximation for demo use.
+========================= */
+function classicalMDSFromDistance(D, seed) {
+  const n = D.length;
+  const D2 = Array.from({ length: n }, (_, i) =>
+    Array.from({ length: n }, (_, j) => D[i][j] * D[i][j])
+  );
+
+  const rowMeans = new Array(n).fill(0);
+  const colMeans = new Array(n).fill(0);
+  let totalMean = 0;
+
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      rowMeans[i] += D2[i][j];
+      colMeans[j] += D2[i][j];
+      totalMean += D2[i][j];
+    }
+  }
+
+  for (let i = 0; i < n; i++) rowMeans[i] /= n;
+  for (let j = 0; j < n; j++) colMeans[j] /= n;
+  totalMean /= (n * n);
+
+  const B = Array.from({ length: n }, () => new Array(n).fill(0));
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      B[i][j] = -0.5 * (D2[i][j] - rowMeans[i] - colMeans[j] + totalMean);
+    }
+  }
+
+  function powerIteration(mat, iterations = 200, randFn = Math.random) {
+    const n = mat.length;
+    let v = Array.from({ length: n }, () => randFn() - 0.5);
+    normalize(v);
+    for (let it = 0; it < iterations; it++) {
+      const mv = multiplyMatVec(mat, v);
+      normalize(mv);
+      v = mv;
+    }
+    const lambda = dot(v, multiplyMatVec(mat, v));
+    return { value: lambda, vector: v };
+  }
+
+  function multiplyMatVec(mat, vec) {
+    const out = new Array(mat.length).fill(0);
+    for (let i = 0; i < mat.length; i++) {
+      let s = 0;
+      for (let j = 0; j < mat.length; j++) s += mat[i][j] * vec[j];
+      out[i] = s;
+    }
+    return out;
+  }
+
+  function dot(a, b) {
+    let s = 0;
+    for (let i = 0; i < a.length; i++) s += a[i] * b[i];
+    return s;
+  }
+
+  function normalize(v) {
+    let norm = Math.sqrt(v.reduce((acc, x) => acc + x * x, 0));
+    if (norm === 0) norm = 1;
+    for (let i = 0; i < v.length; i++) v[i] /= norm;
+  }
+
+  function deflate(mat, eigenvalue, eigenvector) {
+    const n = mat.length;
+    const out = Array.from({ length: n }, (_, i) => mat[i].slice());
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        out[i][j] -= eigenvalue * eigenvector[i] * eigenvector[j];
+      }
+    }
+    return out;
+  }
+
+  const rand = mulberry32(seed || 1);
+  const e1 = powerIteration(B, 250, rand);
+  const B2 = deflate(B, e1.value, e1.vector);
+  const e2 = powerIteration(B2, 250, rand);
+
+  const lambda1 = Math.max(e1.value, 0);
+  const lambda2 = Math.max(e2.value, 0);
+
+  const coords = Array.from({ length: n }, (_, i) => ({
+    x: e1.vector[i] * Math.sqrt(lambda1),
+    y: e2.vector[i] * Math.sqrt(lambda2)
+  }));
+
+  return coords;
+}
+
+function applyPerplexitySeedJitter(coords, perplexity, seed) {
+  const rand = mulberry32(seed || 1);
+  const scale = Math.max(0.02, 1 / Math.max(5, perplexity));
+  return coords.map(p => ({
+    x: p.x + (rand() - 0.5) * scale,
+    y: p.y + (rand() - 0.5) * scale
+  }));
+}
+
+/* =========================
+   D3 plot
+========================= */
+const svg = d3.select("#chart");
+const tooltip = d3.select("#tooltip");
+const loadingBox = document.getElementById("loadingBox");
+const statusBox = document.getElementById("statusBox");
+const distanceTypeEl = document.getElementById("distanceType");
+const perplexityEl = document.getElementById("perplexity");
+const randomSeedEl = document.getElementById("randomSeed");
+const gammaEl = document.getElementById("gamma");
+const gammaGroup = document.getElementById("gammaGroup");
+const fileInput = document.getElementById("fileInput");
+const runBtn = document.getElementById("runBtn");
+const displayLabelColEl = document.getElementById("displayLabelCol");
+
+let rawData = [];
+let parsedData = [];
+
+distanceTypeEl.addEventListener("change", () => {
+  gammaGroup.style.display = distanceTypeEl.value === "mixed" ? "block" : "none";
+});
+
+function setStatus(msg) {
+  statusBox.textContent = "Status: " + msg;
+}
+
+function setLoading(flag, msg = "Computing...") {
+  loadingBox.style.display = flag ? "block" : "none";
+  loadingBox.textContent = msg;
+}
+
+function fillLabelDropdown(columns) {
+  displayLabelColEl.innerHTML = "";
+  columns.forEach(col => {
+    const op = document.createElement("option");
+    op.value = col;
+    op.textContent = col;
+    displayLabelColEl.appendChild(op);
+  });
+  const nameLike = columns.find(c => /name|institution|school/i.test(c));
+  if (nameLike) displayLabelColEl.value = nameLike;
+}
+
+function resizeSvg() {
+  const main = document.querySelector(".main");
+  svg.attr("width", main.clientWidth).attr("height", main.clientHeight);
+}
+window.addEventListener("resize", resizeSvg);
+
+function drawScatter(points, labelCol) {
+  resizeSvg();
+  const width = +svg.attr("width");
+  const height = +svg.attr("height");
+  svg.selectAll("*").remove();
+
+  const margin = { top: 30, right: 30, bottom: 40, left: 50 };
+
+  const xExtent = d3.extent(points, d => d.x);
+  const yExtent = d3.extent(points, d => d.y);
+
+  const padX = (xExtent[1] - xExtent[0] || 1) * 0.1;
+  const padY = (yExtent[1] - yExtent[0] || 1) * 0.1;
+
+  const x = d3.scaleLinear()
+    .domain([xExtent[0] - padX, xExtent[1] + padX])
+    .range([margin.left, width - margin.right]);
+
+  const y = d3.scaleLinear()
+    .domain([yExtent[0] - padY, yExtent[1] + padY])
+    .range([height - margin.bottom, margin.top]);
+
+  const g = svg.append("g");
+
+  g.append("g")
+    .attr("transform", `translate(0,${height - margin.bottom})`)
+    .call(d3.axisBottom(x));
+
+  g.append("g")
+    .attr("transform", `translate(${margin.left},0)`)
+    .call(d3.axisLeft(y));
+
+  const pointLayer = g.append("g");
+
+  pointLayer.selectAll("circle")
+    .data(points)
+    .join("circle")
+    .attr("cx", d => x(d.x))
+    .attr("cy", d => y(d.y))
+    .attr("r", 4)
+    .attr("fill", "steelblue")
+    .attr("opacity", 0.75)
+    .on("mouseover", function(event, d) {
+      d3.select(this).attr("r", 6).attr("opacity", 1);
+      const label = d.original[labelCol] ?? "(missing)";
+      const name = d.original["Name"] ?? "(no name)";
+      const state = d.original["State abbreviation"] ?? "(no state)";
+      const tuition = d.original["Average Tuition and Fees"];
+      const enrollment = d.original["Total enrollment"];
+      tooltip
+        .style("visibility", "visible")
+        .html(`
+          <div><strong>${name}</strong></div>
+          <div style="color:#ccc">${labelCol}: ${label}</div>
+          <hr style="border:none;border-top:1px solid #555">
+          State: ${state}<br/>
+          Tuition: ${tuition ?? "N/A"}<br/>
+          Enrollment: ${enrollment ?? "N/A"}
+        `);
+    })
+
+      
+
+    .on("mousemove", function(event) {
+      tooltip
+        .style("left", (event.pageX + 12) + "px")
+        .style("top", (event.pageY + 12) + "px");
+    })
+    .on("mouseout", function() {
+      d3.select(this).attr("r", 4).attr("opacity", 0.75);
+      tooltip.style("visibility", "hidden");
+    });
+
+  svg.append("text")
+    .attr("x", 20)
+    .attr("y", 24)
+    .attr("font-size", 16)
+    .attr("font-weight", "bold")
+    .text("Projected 2D embedding");
+
+  const zoom = d3.zoom()
+    .scaleExtent([0.5, 10])
+    .on("zoom", (event) => {
+      g.attr("transform", event.transform);
+    });
+
+  svg.call(zoom);
+}
+
+/* =========================
+   Main compute pipeline
+========================= */
+async function runPipeline() {
+  if (!parsedData.length) {
+    setStatus("no data loaded.");
+    return;
+  }
+
+  const distanceType = distanceTypeEl.value;
+  const perplexity = +perplexityEl.value;
+  const randomSeed = +randomSeedEl.value;
+  const gamma = +gammaEl.value;
+  const labelCol = displayLabelColEl.value || getColumns(parsedData)[0];
+
+  setLoading(true, "Computing distance matrix...");
+  setStatus("inferring column types...");
+
+  await new Promise(r => setTimeout(r, 30));
+
+  const { numericCols, categoricalCols } = inferColumnTypes(parsedData);
+  const numericStats = minMaxNumeric(parsedData, numericCols);
+
+  setStatus(`numeric cols: ${numericCols.length}, categorical cols: ${categoricalCols.length}`);
+
+  await new Promise(r => setTimeout(r, 30));
+
+  setLoading(true, "Computing distance matrix...");
+  const D = buildDistanceMatrix(parsedData, distanceType, gamma, numericCols, categoricalCols, numericStats);
+
+  await new Promise(r => setTimeout(r, 30));
+
+  setLoading(true, "Embedding into 2D...");
+  setStatus("running embedding...");
+
+  let coords = classicalMDSFromDistance(D, randomSeed);
+  coords = applyPerplexitySeedJitter(coords, perplexity, randomSeed);
+
+  const points = coords.map((p, i) => ({
+    x: p.x,
+    y: p.y,
+    original: parsedData[i]
+  }));
+
+  drawScatter(points, labelCol);
+  setLoading(false);
+  setStatus(`done. rows=${parsedData.length}, distance=${distanceType}, perplexity=${perplexity}, seed=${randomSeed}${distanceType === "mixed" ? `, gamma=${gamma}` : ""}`);
+}
+
+/* =========================
+   Load data
+========================= */
+async function loadCsvText(text) {
+  rawData = d3.csvParse(text);
+  parsedData = rawData.map(autoTypeRow);
+  const cols = getColumns(parsedData);
+  fillLabelDropdown(cols);
+  setStatus(`data loaded. rows=${parsedData.length}, cols=${cols.length}`);
+}
+
+async function tryDefaultLoad() {
+  try {
+    const text = await d3.text("./data_clean/IPEDS_data_cleaned.csv");
+    await loadCsvText(text);
+  } catch (err) {
+    setStatus("default CSV not found. please upload a CSV manually.");
+  }
+}
+
+fileInput.addEventListener("change", async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  const text = await file.text();
+  await loadCsvText(text);
+});
+
+runBtn.addEventListener("click", runPipeline);
+
+resizeSvg();
+tryDefaultLoad();
+</script>
+</body>
+</html>

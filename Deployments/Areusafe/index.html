@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Admission Range Predictor: Where Do I Stand?</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f7fafc; margin: 0; padding: 20px; }
+        .card { max-width: 800px; margin: auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 25px rgba(0,0,0,0.06); }
+        h2 { text-align: center; color: #2d3748; margin-bottom: 5px; }
+        .desc { text-align: center; color: #718096; font-size: 14px; margin-bottom: 25px; }
+
+        .controls { 
+            display: grid; grid-template-columns: 1fr 1fr; gap: 15px; 
+            margin-bottom: 25px; padding: 20px; background: #edf2f7; border-radius: 10px;
+        }
+        .control-group { display: flex; flex-direction: column; gap: 6px; }
+        label { font-size: 11px; font-weight: bold; color: #4a5568; text-transform: uppercase; }
+        input, select { padding: 10px; border: 1px solid #cbd5e0; border-radius: 6px; font-size: 14px; }
+
+        #chart-area { width: 100%; height: 350px; position: relative; margin-top: 30px; }
+        
+        /* Range Bar Styling */
+        .range-bar { fill: #ebf8ff; stroke: #3182ce; stroke-width: 2; rx: 10; ry: 10; }
+        .range-text { font-size: 12px; font-weight: bold; fill: #2b6cb0; text-anchor: middle; }
+        
+        /* Score Indicator Styling */
+        .score-line { stroke: #e53e3e; stroke-width: 4; stroke-linecap: round; }
+        .score-label { fill: #e53e3e; font-size: 14px; font-weight: 800; text-anchor: middle; }
+        
+        /* Status Text Styling */
+        .status-badge { font-size: 24px; font-weight: 900; text-anchor: middle; text-transform: uppercase; }
+        .rate-label { font-size: 16px; font-weight: 600; fill: #4a5568; text-anchor: middle; }
+
+        .axis-label { font-size: 12px; fill: #718096; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2>Admission Range Predictor</h2>
+    <p class="desc">Enter your scores to see how you compare with the 25th-75th percentile of admitted students.</p>
+    
+    <div class="controls">
+        <div class="control-group">
+            <label>1. Search Institution</label>
+            <input type="text" id="school-search" placeholder="e.g. University of Illinois" list="school-list">
+            <datalist id="school-list"></datalist>
+        </div>
+        <div class="control-group">
+            <label>2. Year</label>
+            <select id="year-sel"></select>
+        </div>
+        <div class="control-group">
+            <label>3. Test Type</label>
+            <select id="metric-sel">
+                <option value="sat_math">SAT Math</option>
+                <option value="sat_cr">SAT Reading (EBRW)</option>
+                <option value="act_composite">ACT Composite</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label>4. Your Score</label>
+            <input type="number" id="user-score" value="700">
+        </div>
+    </div>
+
+    <div id="chart-area"></div>
+</div>
+
+<script>
+// Chart dimensions
+const margin = {top: 60, right: 50, bottom: 60, left: 50},
+      width = 740 - margin.left - margin.right,
+      height = 350 - margin.top - margin.bottom;
+
+const svg = d3.select("#chart-area").append("svg")
+    .attr("width", "100%")
+    .attr("height", "100%")
+    .attr("viewBox", `0 0 ${width + margin.left + margin.right} ${height + margin.top + margin.bottom}`)
+    .append("g")
+    .attr("transform", `translate(${margin.left},${margin.top})`);
+
+let fullDataset = [];
+
+// Load CSV directly
+d3.csv("ipeds_panel_2017_2023.csv", d3.autoType).then(data => {
+    fullDataset = data;
+
+    // Autocomplete for school names
+    const schools = [...new Set(data.map(d => d.institution_name))].sort();
+    d3.select("#school-list").selectAll("option").data(schools).enter().append("option").attr("value", d => d);
+
+    // Year selection
+    const years = [...new Set(data.map(d => d.year))].sort((a,b) => b-a);
+    d3.select("#year-sel").selectAll("option").data(years).enter().append("option").text(d => d);
+
+    // Initial default school
+    d3.select("#school-search").property("value", "University of Illinois Urbana-Champaign");
+    
+    // Bind change events
+    d3.selectAll("input, select").on("input", updateVisualization);
+
+    updateVisualization();
+});
+
+function updateVisualization() {
+    const school = d3.select("#school-search").property("value");
+    const year = +d3.select("#year-sel").property("value");
+    const metric = d3.select("#metric-sel").property("value");
+    const userScore = +d3.select("#user-score").property("value");
+
+    const record = fullDataset.find(d => d.institution_name === school && d.year === year);
+    
+    svg.selectAll("*").remove();
+
+    if (!record || record[metric + "_25th"] === null) {
+        svg.append("text").attr("x", width/2).attr("y", height/2).attr("text-anchor", "middle").text("No score data available for this selection.");
+        return;
+    }
+
+    const p25 = record[metric + "_25th"];
+    const p75 = record[metric + "_75th"];
+    const admissionRate = record.admission_rate;
+
+    // Dynamic Scale based on test type
+    const xRange = (metric.includes("sat")) ? [200, 800] : [1, 36];
+    const x = d3.scaleLinear().domain(xRange).range([0, width]);
+
+    // Draw Axis
+    svg.append("g").attr("transform", `translate(0,${height})`).call(d3.axisBottom(x).ticks(10));
+
+    // Draw the 25th-75th Range Bar
+    const barHeight = 60;
+    const barY = height / 2 - barHeight / 2;
+
+    svg.append("rect")
+        .attr("class", "range-bar")
+        .attr("x", x(p25))
+        .attr("y", barY)
+        .attr("width", x(p75) - x(p25))
+        .attr("height", barHeight);
+
+    // Labels for P25 and P75
+    svg.append("text").attr("class", "range-text").attr("x", x(p25)).attr("y", barY - 10).text(`25th: ${p25}`);
+    svg.append("text").attr("class", "range-text").attr("x", x(p75)).attr("y", barY - 10).text(`75th: ${p75}`);
+
+    // Draw User's Score Line
+    svg.append("line")
+        .attr("class", "score-line")
+        .attr("x1", x(userScore)).attr("x2", x(userScore))
+        .attr("y1", barY - 20).attr("y2", barY + barHeight + 20);
+
+    svg.append("text")
+        .attr("class", "score-label")
+        .attr("x", x(userScore))
+        .attr("y", barY + barHeight + 40)
+        .text(`Your Score: ${userScore}`);
+
+    // Determine Admission Status (Safety/Target/Reach)
+    let status = "";
+    let color = "";
+    if (userScore > p75) { status = "Safety"; color = "#38a169"; }
+    else if (userScore >= p25) { status = "Target"; color = "#3182ce"; }
+    else { status = "Reach"; color = "#e53e3e"; }
+
+    // Display Status and Admission Rate
+    svg.append("text")
+        .attr("class", "status-badge")
+        .attr("x", width / 2)
+        .attr("y", -10)
+        .style("fill", color)
+        .text(status);
+
+    svg.append("text")
+        .attr("class", "rate-label")
+        .attr("x", width / 2)
+        .attr("y", height + 55)
+        .text(`Overall Admission Rate: ${admissionRate}%`);
+}
+</script>
+</body>
+</html>
