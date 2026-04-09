@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>U.S. College Selection Explorer</title>
+  <style>
+    :root {
+      --bg: #eef1f4;
+      --panel: #fbfbfc;
+      --card: #ffffff;
+      --line: #dde5ee;
+      --line-strong: #d2dbe7;
+      --text: #12233f;
+      --muted: #73849b;
+      --blue: #2f8de0;
+      --blue-soft: #e8f3ff;
+      --blue-soft-2: #f3f8fe;
+      --shadow: 0 14px 40px rgba(17, 35, 63, 0.07);
+      --shadow-soft: 0 8px 24px rgba(17, 35, 63, 0.05);
+      --radius-xl: 30px;
+      --radius-lg: 22px;
+      --radius-md: 18px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Inter", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      line-height: 1.6;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .page {
+      width: min(1280px, calc(100% - 34px));
+      margin: 28px auto;
+      background: rgba(251,251,252,0.96);
+      border: 1px solid rgba(215,223,232,0.92);
+      border-radius: 34px;
+      box-shadow: var(--shadow);
+      padding: 34px 34px 28px;
+    }
+
+    .top {
+      text-align: center;
+      padding: 10px 8px 20px;
+    }
+
+    .eyebrow {
+      display: inline-block;
+      padding: 7px 14px;
+      border-radius: 999px;
+      background: var(--blue-soft);
+      color: var(--blue);
+      font-weight: 700;
+      letter-spacing: .06em;
+      font-size: 12px;
+    }
+
+    h1 {
+      margin: 14px 0 8px;
+      font-size: clamp(34px, 5vw, 52px);
+      line-height: 1.08;
+      letter-spacing: -0.03em;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: var(--blue);
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: .10em;
+      text-transform: uppercase;
+    }
+
+    .desc {
+      width: min(760px, 100%);
+      margin: 10px auto 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .search-wrap {
+      width: min(760px, 100%);
+      margin: 22px auto 0;
+      position: relative;
+    }
+
+    .search-wrap input {
+      width: 100%;
+      height: 58px;
+      border-radius: 999px;
+      border: 1.5px solid var(--line);
+      outline: none;
+      background: #fff;
+      padding: 0 22px;
+      font-size: 16px;
+      color: var(--text);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.7);
+    }
+
+    .search-wrap input::placeholder { color: #8da0b6; }
+
+    .quick-nav {
+      margin: 18px auto 0;
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .quick-nav a {
+      padding: 9px 14px;
+      border-radius: 999px;
+      background: #fff;
+      border: 1px solid var(--line);
+      color: #47637f;
+      font-size: 13px;
+      font-weight: 700;
+      box-shadow: var(--shadow-soft);
+    }
+
+    .main {
+      margin-top: 26px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 310px;
+      gap: 24px;
+      align-items: start;
+    }
+
+    .content {
+      min-width: 0;
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 20px;
+      background: var(--blue-soft-2);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 24px 22px;
+      box-shadow: var(--shadow-soft);
+    }
+
+    .sidebar h3 {
+      margin: 0 0 14px;
+      font-size: 14px;
+      letter-spacing: .06em;
+      color: #38506e;
+      text-transform: uppercase;
+    }
+
+    .sidebar hr {
+      border: none;
+      border-top: 1px solid var(--line-strong);
+      margin: 0 0 16px;
+    }
+
+    .side-block + .side-block { margin-top: 16px; }
+    .side-title {
+      margin: 0 0 6px;
+      color: var(--blue);
+      font-size: 13px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .side-text {
+      margin: 0;
+      color: #617690;
+      font-size: 14px;
+      line-height: 1.9;
+    }
+
+    .section + .section { margin-top: 18px; }
+
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 14px;
+      margin-bottom: 12px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .section-head h2 {
+      margin: 0;
+      font-size: 30px;
+      letter-spacing: -0.02em;
+    }
+
+    .section-head p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      max-width: 760px;
+    }
+
+    .section-link {
+      flex-shrink: 0;
+      color: #4b6a8f;
+      font-size: 13px;
+      font-weight: 800;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #fff;
+    }
+
+    .featured-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .card {
+      display: block;
+      min-height: 168px;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      padding: 18px 18px 16px;
+      box-shadow: var(--shadow-soft);
+      transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+    }
+
+    .card:hover {
+      transform: translateY(-3px);
+      border-color: #c9d8ea;
+      box-shadow: 0 16px 32px rgba(17, 35, 63, 0.08);
+    }
+
+    .card.large { min-height: 154px; }
+
+    .card-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: var(--blue-soft);
+      color: var(--blue);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .02em;
+    }
+
+    .arrow {
+      color: #7f92a8;
+      font-size: 18px;
+    }
+
+    .card h3 {
+      margin: 0 0 8px;
+      font-size: 22px;
+      line-height: 1.24;
+      letter-spacing: -0.02em;
+    }
+
+    .card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.8;
+    }
+
+    .meta {
+      margin-top: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 9px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #fafcff;
+      color: #627993;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .footer-note {
+      margin-top: 18px;
+      padding: 16px 18px;
+      border-radius: 18px;
+      background: #fff;
+      border: 1px solid var(--line);
+      color: #6d8198;
+      font-size: 13px;
+      line-height: 1.85;
+    }
+
+    .hidden { display: none !important; }
+
+    @media (max-width: 1120px) {
+      .main { grid-template-columns: 1fr; }
+      .sidebar { position: static; }
+      .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 760px) {
+      .page { width: calc(100% - 20px); padding: 22px 18px 20px; margin: 12px auto; border-radius: 26px; }
+      .featured-grid, .cards { grid-template-columns: 1fr; }
+      .section-head { flex-direction: column; align-items: flex-start; }
+      .search-wrap input { height: 52px; font-size: 15px; }
+      h1 { font-size: 34px; }
+      .section-head h2 { font-size: 24px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="top">
+      <div class="eyebrow">SD6105 · College Selection Visual Hub</div>
+      <h1>U.S. College Selection Explorer</h1>
+      <p class="subtitle">2017 - 2023 Integrated Data · For Students and Families</p>
+      <p class="desc">
+        This homepage is organized around a real college selection workflow instead of technical modules. Start with geography, then compare admissions difficulty and cost, and finally use institution profiles, longitudinal change, and trend views for a fuller decision.
+      </p>
+      <div class="search-wrap">
+        <input id="searchInput" type="text" placeholder="Search: map, admissions, net price, profiler, trends, SAT, diversity..." />
+      </div>
+      <nav class="quick-nav">
+        <a href="#core">Core Picks</a>
+        <a href="#compare">Compare & Filter</a>
+        <a href="#trajectory">Change Over Time</a>
+        <a href="#trend">Trend Analysis</a>
+        <a href="#all">All Visuals</a>
+      </nav>
+    </header>
+
+    <div class="main">
+      <div class="content">
+        <section class="section" id="core">
+          <div class="section-head">
+            <div>
+              <h2>Core Starting Points</h2>
+              <p>This group works best as the main entry area for students and parents. These are the most intuitive and practical tools to begin with.</p>
+            </div>
+          </div>
+
+          <div class="featured-grid">
+            <a class="card large searchable" href="./Deployments/GeoMap/" data-keywords="map geography location state college distribution region">
+              <div class="card-top"><span class="tag">Best Place to Start</span><span class="arrow">↗</span></div>
+              <h3>College Map</h3>
+              <p>Start from location and quickly explore school distribution, state-level patterns, and regional preferences.</p>
+              <div class="meta"><span class="pill">Map</span><span class="pill">Region Filter</span></div>
+            </a>
+
+            <a class="card large searchable" href="./Deployments/Areusafe/" data-keywords="admission safety reach target likely match">
+              <div class="card-top"><span class="tag">Best Place to Start</span><span class="arrow">↗</span></div>
+              <h3>Admissions Safety Guide</h3>
+              <p>Closer to what families actually ask: is a school more of a reach, target, or likely choice?</p>
+              <div class="meta"><span class="pill">Selectivity</span><span class="pill">Application Positioning</span></div>
+            </a>
+
+            <a class="card large searchable" href="./Deployments/NetPrice/" data-keywords="net price tuition cost budget family income affordability">
+              <div class="card-top"><span class="tag">Best Place to Start</span><span class="arrow">↗</span></div>
+              <h3>Net Price & Cost</h3>
+              <p>Go beyond sticker tuition and compare costs that are closer to what families may actually pay.</p>
+              <div class="meta"><span class="pill">Net Price</span><span class="pill">Budget Fit</span></div>
+            </a>
+
+            <a class="card large searchable" href="./Deployments/Radar/" data-keywords="institution profiler radar multidimensional overview comparison">
+              <div class="card-top"><span class="tag">Best Place to Start</span><span class="arrow">↗</span></div>
+              <h3>Institution Profiler</h3>
+              <p>Condense multiple dimensions into one view so users can form a quick overall impression of a college.</p>
+              <div class="meta"><span class="pill">Multi-Dimensional View</span><span class="pill">Fast Overview</span></div>
+            </a>
+          </div>
+        </section>
+
+        <section class="section" id="compare">
+          <div class="section-head">
+            <div>
+              <h2>Compare & Filter</h2>
+              <p>Once a family has a shortlist, this set becomes more useful for narrowing options and making side-by-side comparisons.</p>
+            </div>
+            <a class="section-link" href="./Deployments/">Open Visual Directory</a>
+          </div>
+
+          <div class="cards">
+            <a class="card searchable" href="./Deployments/rank-acceptance-rate/" data-keywords="ranking acceptance rate selectivity competitiveness">
+              <div class="card-top"><span class="tag">Comparison</span><span class="arrow">↗</span></div>
+              <h3>Rank & Acceptance Rate</h3>
+              <p>View school reputation and admissions difficulty together for a more intuitive sense of competitiveness.</p>
+              <div class="meta"><span class="pill">Competition</span><span class="pill">Acceptance Rate</span></div>
+            </a>
+
+            <a class="card searchable" href="./Deployments/parallel-coordinates/" data-keywords="multi-metric interactive filtering parallel coordinates shortlist">
+              <div class="card-top"><span class="tag">Comparison</span><span class="arrow">↗</span></div>
+              <h3>Multi-Metric Filter</h3>
+              <p>Useful when users want to compare many indicators at once and continue narrowing a college list.</p>
+              <div class="meta"><span class="pill">Combined Filter</span><span class="pill">Multiple Metrics</span></div>
+            </a>
+
+            <a class="card searchable" href="./Deployments/ScatterPlot/" data-keywords="scatterplot two metrics relationship comparison">
+              <div class="card-top"><span class="tag">Comparison</span><span class="arrow">↗</span></div>
+              <h3>Two-Metric Relationship View</h3>
+              <p>Explore the relationship between two indicators for a deeper understanding of institutional differences.</p>
+              <div class="meta"><span class="pill">Relationship View</span><span class="pill">Scatter Plot</span></div>
+            </a>
+
+            <a class="card searchable" href="./Deployments/Choropleth-GeoMap/" data-keywords="state level choropleth map macro distribution">
+              <div class="card-top"><span class="tag">Regional View</span><span class="arrow">↗</span></div>
+              <h3>State-Level Heat Map</h3>
+              <p>Take a broader look at educational patterns and differences across U.S. states.</p>
+              <div class="meta"><span class="pill">State Comparison</span><span class="pill">Heat Map</span></div>
+            </a>
+
+            <a class="card searchable" href="./Deployments/admission-funnel/" data-keywords="admissions funnel application enrollment pipeline">
+              <div class="card-top"><span class="tag">Process View</span><span class="arrow">↗</span></div>
+              <h3>Application-to-Enrollment Funnel</h3>
+              <p>Good for explaining the admissions pipeline, from applications to offers to final enrollment.</p>
+              <div class="meta"><span class="pill">Admissions Flow</span><span class="pill">Funnel View</span></div>
+            </a>
+
+            <a class="card searchable" href="./Deployments/Histogram/" data-keywords="distribution histogram numerical indicator range">
+              <div class="card-top"><span class="tag">Foundation</span><span class="arrow">↗</span></div>
+              <h3>Metric Distribution</h3>
+              <p>Quickly understand how a numerical indicator is distributed across institutions.</p>
+              <div class="meta"><span class="pill">Distribution</span><span class="pill">Histogram</span></div>
+            </a>
+          </div>
+        </section>
+
+        <section class="section" id="trajectory">
+          <div class="section-head">
+            <div>
+              <h2>Institutional Change Over Time</h2>
+              <p>If users want to see how schools have evolved across years, this view is more informative than a single-year snapshot.</p>
+            </div>
+            <a class="section-link" href="./trajectory_visualization/trajectory-explorer/">Open Trajectory View</a>
+          </div>
+
+          <div class="cards">
+            <a class="card searchable" href="./trajectory_visualization/trajectory-explorer/" data-keywords="trajectory time change 2d 3d dynamic evolution years">
+              <div class="card-top"><span class="tag">Dynamic View</span><span class="arrow">↗</span></div>
+              <h3>Trajectory Explorer</h3>
+              <p>Track how institutions move and change across years for a more longitudinal reading of the data.</p>
+              <div class="meta"><span class="pill">Time Series View</span><span class="pill">2D / 3D</span></div>
+            </a>
+          </div>
+        </section>
+
+        <section class="section" id="trend">
+          <div class="section-head">
+            <div>
+              <h2>Trend Analysis</h2>
+              <p>This group works well as supporting evidence, helping families evaluate long-term changes in demand, testing, diversity, and cost.</p>
+            </div>
+            <a class="section-link" href="./Trend_Analysis/">Open Trend Directory</a>
+          </div>
+
+          <div class="cards">
+            <a class="card searchable" href="./Trend_Analysis/1_applicants_and_admissions/" data-keywords="applicants admissions demand trend">
+              <div class="card-top"><span class="tag">Trend Analysis</span><span class="arrow">↗</span></div>
+              <h3>Applicants & Admissions Trend</h3>
+              <p>See how application demand and admissions counts change over time.</p>
+              <div class="meta"><span class="pill">Application Demand</span><span class="pill">Admissions Change</span></div>
+            </a>
+
+            <a class="card searchable" href="./Trend_Analysis/2_demographic_trends/" data-keywords="demographics student composition gender diversity change">
+              <div class="card-top"><span class="tag">Trend Analysis</span><span class="arrow">↗</span></div>
+              <h3>Student Demographic Trends</h3>
+              <p>Helpful for understanding how campus composition changes over multiple years.</p>
+              <div class="meta"><span class="pill">Student Profile</span><span class="pill">Campus Context</span></div>
+            </a>
+
+            <a class="card searchable" href="./Trend_Analysis/3_test_submission_trends/" data-keywords="sat act standardized testing submission policy">
+              <div class="card-top"><span class="tag">Trend Analysis</span><span class="arrow">↗</span></div>
+              <h3>Testing Submission Trends</h3>
+              <p>Track SAT and ACT submission changes, which can be useful for application strategy.</p>
+              <div class="meta"><span class="pill">SAT / ACT</span><span class="pill">Strategy Insight</span></div>
+            </a>
+
+            <a class="card searchable" href="./Trend_Analysis/4_admission_vs_tuition/" data-keywords="admission tuition cost relationship pricing selectivity">
+              <div class="card-top"><span class="tag">Trend Analysis</span><span class="arrow">↗</span></div>
+              <h3>Admissions vs. Tuition</h3>
+              <p>Link changes in cost with admissions competitiveness to better understand institutional positioning.</p>
+              <div class="meta"><span class="pill">Cost Trend</span><span class="pill">Positioning</span></div>
+            </a>
+
+            <a class="card searchable" href="./Trend_Analysis/5_enrollment_race/" data-keywords="race ethnicity enrollment composition diversity">
+              <div class="card-top"><span class="tag">Trend Analysis</span><span class="arrow">↗</span></div>
+              <h3>Enrollment Race Composition</h3>
+              <p>Useful as supporting context for understanding campus environment and student composition.</p>
+              <div class="meta"><span class="pill">Race Composition</span><span class="pill">Campus Context</span></div>
+            </a>
+
+            <a class="card searchable" href="./Trend_Analysis/6_strength_radar_view.html/" data-keywords="strength radar strengths institutional advantage comparison">
+              <div class="card-top"><span class="tag">Trend Analysis</span><span class="arrow">↗</span></div>
+              <h3>Institution Strength Radar</h3>
+              <p>Especially useful in the final comparison stage when users want a fast read on relative strengths.</p>
+              <div class="meta"><span class="pill">Strength Comparison</span><span class="pill">Radar View</span></div>
+            </a>
+
+            <a class="card searchable" href="./Trend_Analysis/7_demographic_distribution_map.html/" data-keywords="demographic distribution map state level macro view">
+              <div class="card-top"><span class="tag">Trend Analysis</span><span class="arrow">↗</span></div>
+              <h3>Demographic Distribution Map</h3>
+              <p>View student distribution at the state level for a more macro perspective.</p>
+              <div class="meta"><span class="pill">State Level</span><span class="pill">Macro View</span></div>
+            </a>
+          </div>
+        </section>
+
+        <section class="section" id="all">
+          <div class="section-head">
+            <div>
+              <h2>All Visualizations</h2>
+              <p>This section keeps the remaining views for full showcase, review, and final presentation coverage.</p>
+            </div>
+          </div>
+
+          <div class="cards">
+            <a class="card searchable" href="./Deployments/BarChart/" data-keywords="bar chart categorical comparison">
+              <div class="card-top"><span class="tag">Full Showcase</span><span class="arrow">↗</span></div>
+              <h3>Categorical Comparison</h3>
+              <p>Good for direct comparisons across categories and easy for general audiences to read.</p>
+              <div class="meta"><span class="pill">Bar Chart</span><span class="pill">Categorical Data</span></div>
+            </a>
+
+            <a class="card searchable" href="./Deployments/Pie-Diversity/" data-keywords="pie diversity campus composition shares">
+              <div class="card-top"><span class="tag">Full Showcase</span><span class="arrow">↗</span></div>
+              <h3>Campus Diversity Snapshot</h3>
+              <p>Use share-based visuals to present composition and environment information in a simple way.</p>
+              <div class="meta"><span class="pill">Share View</span><span class="pill">Environment Snapshot</span></div>
+            </a>
+
+            <a class="card searchable" href="./Deployments/tSNE/" data-keywords="cluster embedding dimensionality reduction similar schools">
+              <div class="card-top"><span class="tag">Full Showcase</span><span class="arrow">↗</span></div>
+              <h3>Institution Clustering View</h3>
+              <p>Group similar institutions together as a more advanced but visually interesting supporting analysis.</p>
+              <div class="meta"><span class="pill">Clustering</span><span class="pill">Dimensionality Reduction</span></div>
+            </a>
+          </div>
+
+          <div class="footer-note">
+            This homepage is now fully in English, uses a bright and clean presentation style, and covers the main visualization pages currently available on your site. Rename this file to <strong>index.html</strong> and place it in the site root when you are ready to publish.
+          </div>
+        </section>
+      </div>
+
+      <aside class="sidebar">
+        <h3>How to Use</h3>
+        <hr />
+
+        <div class="side-block">
+          <p class="side-title">Suggested Order</p>
+          <p class="side-text">Start with the map, then check admissions safety, then compare net price and cost, and finally use the profiler and trend views for added context.</p>
+        </div>
+
+        <div class="side-block">
+          <p class="side-title">Who This Is For</p>
+          <p class="side-text">Designed for high school students, parents, counselors, and anyone who wants a clean and intuitive way to compare colleges.</p>
+        </div>
+
+        <div class="side-block">
+          <p class="side-title">Page Role</p>
+          <p class="side-text">This homepage acts as the master navigation layer, while each linked page handles a more focused analysis task.</p>
+        </div>
+
+        <div class="side-block">
+          <p class="side-title">Visual Style</p>
+          <p class="side-text">The layout follows the reference style you showed: light background, rounded panels, generous spacing, dark typography, and soft blue accents in a more compact, polished format.</p>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <script>
+    const input = document.getElementById('searchInput');
+    const items = Array.from(document.querySelectorAll('.searchable'));
+    input.addEventListener('input', function () {
+      const q = this.value.trim().toLowerCase();
+      items.forEach(item => {
+        const text = (item.innerText + ' ' + (item.dataset.keywords || '')).toLowerCase();
+        item.classList.toggle('hidden', q && !text.includes(q));
+      });
+    });
+  </script>
+</body>
+</html>
